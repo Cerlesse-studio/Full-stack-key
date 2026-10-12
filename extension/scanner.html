@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>读取二维码 · 密码保险库</title>
+  <link rel="stylesheet" href="scanner.css" />
+  <!-- 取景框样式：与内容脚本共用同一份 -->
+  <link rel="stylesheet" href="qr-capture.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="head">
+      <h1>读取二维码</h1>
+      <p id="mode-hint" class="hint">截取屏幕后在截图里框住二维码</p>
+    </header>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+
+    <div class="actions">
+      <button type="button" class="btn btn-primary" id="btn-capture">截屏读取</button>
+      <button type="button" class="btn" id="btn-pick">从图片识别</button>
+      <button type="button" class="btn" id="btn-manual">手动输入</button>
+    </div>
+
+    <div class="manual" id="manual-row" hidden>
+      <input type="text" id="manual-text" placeholder="粘贴配对链接或二维码里的文本" autocomplete="off" spellcheck="false" />
+      <button type="button" class="btn btn-primary" id="btn-manual-submit">读取</button>
+    </div>
+
+    <p class="foot">二维码已经显示在屏幕上时，直接「截屏读取」最快：不用摄像头，也不用截图另存。</p>
+
+    <input type="file" id="file-input" accept="image/*" hidden />
+  </main>
+
+  <script src="vendor/jsQR.min.js"></script>
+  <script src="qr-capture.js"></script>
+  <script src="scanner.js"></script>
+</body>
+</html>

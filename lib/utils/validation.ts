@@ -8,7 +8,6 @@ export const passwordEntryInputSchema = z.object({
   password: z.string().min(1, 'Password is required'),
   notes: z.string().max(10000).optional(),
   tags: z.array(z.string().min(1).max(50)).max(50).optional(),
-  categoryId: z.string().optional(),
 }) satisfies z.ZodType<PasswordEntryInput>;
 
 export const passwordEntryUpdateSchema = z.object({
@@ -18,13 +17,8 @@ export const passwordEntryUpdateSchema = z.object({
   password: z.string().min(1).optional(),
   notes: z.string().max(10000).optional(),
   tags: z.array(z.string().min(1).max(50)).max(50).optional(),
-  categoryId: z.string().optional(),
   version: z.number().int().min(1),
 }) satisfies z.ZodType<PasswordEntryUpdate>;
-
-export const categoryInputSchema = z.object({
-  name: z.string().min(1, 'Category name is required').max(100),
-});
 
 export const tagInputSchema = z.object({
   name: z.string().min(1, 'Tag name is required').max(50),
@@ -32,6 +26,11 @@ export const tagInputSchema = z.object({
 });
 
 export const initSchema = z.object({
+  adminUsername: z
+    .string()
+    .trim()
+    .min(2, '管理员账号名称至少 2 个字符')
+    .max(32, '管理员账号名称最多 32 个字符'),
   masterPassword: z.string().min(8, 'Master password must be at least 8 characters').max(256),
 });
 
@@ -64,7 +63,8 @@ export const importSchema = z.object({
   strategy: z.enum(['skip', 'overwrite', 'duplicate']).default('skip'),
   data: z.object({
     version: z.string(),
-    categories: z.array(z.any()).default([]),
+    /** 旧导出文件里的分类字段，导入时会被转成同名标签 */
+    categories: z.array(z.any()).optional(),
     tags: z.array(z.any()).default([]),
     passwords: z.array(z.any()).default([]),
   }),

@@ -47,3 +47,6 @@ next-env.d.ts
 *.sqlite-wal
 *.sqlite-shm
 *.db
+
+# local backup files (encrypted, do not commit)
+/backups/

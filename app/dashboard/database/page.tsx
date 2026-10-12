@@ -11,7 +11,6 @@ import {
   Copy,
   Check,
   ShieldCheck,
-  Folder,
   Tag as TagIcon,
   KeyRound,
   FileCode,
@@ -90,8 +89,6 @@ export default function DatabasePage() {
         return <KeyRound className="size-4 text-amber-500" />;
       case 'passwords_index':
         return <Layers className="size-4 text-blue-500" />;
-      case 'categories':
-        return <Folder className="size-4 text-emerald-500" />;
       case 'tags':
         return <TagIcon className="size-4 text-purple-500" />;
       case 'config':

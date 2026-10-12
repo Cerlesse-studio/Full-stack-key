@@ -356,6 +356,23 @@ html.light .theme-icon-moon, body.light .theme-icon-moon { display: block; }
   line-height: 1.3;
 }
 
+.pair-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.pair-row .field-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.pair-row .btn {
+  flex-shrink: 0;
+  padding: 0 12px;
+  min-height: 38px;
+}
+
 .advanced-collapsible {
   background: var(--muted);
   border-radius: var(--radius-sm);

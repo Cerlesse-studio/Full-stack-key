@@ -1,5 +1,5 @@
 import type { AppConfig, ApiKey } from '@/lib/types';
-import { getStorage } from '@/lib/storage';
+import { getStorage, listAllKeys } from '@/lib/storage';
 import {
   ConflictError,
   AuthenticationError,
@@ -9,6 +9,10 @@ import { DEFAULT_ITERATIONS } from '@/lib/crypto';
 
 const CONFIG_KEY = 'pm:__config__';
 const SESSIONS_PREFIX = 'pm:sessions:';
+/** 本项目所有键的统一前缀，备份 / 恢复出厂设置均以此扫描 */
+const VAULT_PREFIX = 'pm:';
+/** 旧版本保险库缺少管理员账号名称时的展示兼底值 */
+export const DEFAULT_ADMIN_USERNAME = '管理员';
 
 export const DEFAULT_CONFIG: Omit<AppConfig, 'masterPasswordHash' | 'masterSalt' | 'kekSalt' | 'createdAt'> = {
   initialized: false,
@@ -48,7 +52,8 @@ export async function initializeConfig(
   masterSalt: string,
   kekSalt: string,
   pbkdf2Iterations: number,
-  initialApiKey: ApiKey
+  initialApiKey: ApiKey,
+  adminUsername: string
 ): Promise<AppConfig> {
   const already = await isInitialized();
   if (already) {
@@ -66,6 +71,7 @@ export async function initializeConfig(
     pbkdf2Iterations,
     createdAt: new Date().toISOString(),
     apiKeys: [initialApiKey],
+    adminUsername,
   };
 
   await saveConfig(config);
@@ -175,4 +181,37 @@ export async function deleteSession(sessionId: string): Promise<void> {
   const storage = getStorage();
   const key = SESSIONS_PREFIX + sessionId;
   await storage.delete(key);
+}
+
+/** 读取管理员账号名称；旧版本创建的保险库没有该字段时回退到默认值 */
+export async function getAdminUsername(): Promise<string> {
+  const config = await requireConfig();
+  return config.adminUsername || DEFAULT_ADMIN_USERNAME;
+}
+
+/** 删除全局配置（主密码哈希 / 盐 / API Key 列表），使保险库回到「未初始化」状态 */
+export async function clearConfig(): Promise<void> {
+  const storage = getStorage();
+  await storage.delete(CONFIG_KEY);
+}
+
+export interface WipeVaultResult {
+  /** 实际删除的键总数（密码、分类、标签、配置、会话） */
+  deletedKeys: number;
+}
+
+/**
+ * 恢复出厂设置：删除所有以 `pm:` 开头的键。
+ * 包含密码、分类、标签、全局配置（主密码与 API Key）以及所有登录会话，
+ * 因此保险库会完全回到「未初始化」状态，需要重新设置主密码。
+ */
+export async function wipeAllVaultData(): Promise<WipeVaultResult> {
+  const storage = getStorage();
+  const keys = await listAllKeys(VAULT_PREFIX);
+
+  for (const key of keys) {
+    await storage.delete(key);
+  }
+
+  return { deletedKeys: keys.length };
 }

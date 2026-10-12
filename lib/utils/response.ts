@@ -76,6 +76,8 @@ export const ErrorCodes = {
   DECRYPTION_ERROR: 'DECRYPTION_ERROR',
 
   IMPORT_INVALID_FORMAT: 'IMPORT_INVALID_FORMAT',
+
+  PAIRING_INVALID: 'PAIRING_INVALID',
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

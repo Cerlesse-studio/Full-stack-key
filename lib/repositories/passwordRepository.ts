@@ -7,51 +7,63 @@ import type {
   PaginatedResponse,
   SyncResponse,
   ExportData,
+  LegacyCategory,
+  LegacyExportData,
+  LegacyPasswordEntry,
   PasswordEntryDecrypted,
+  Tag,
 } from '@/lib/types';
 import { getStorage } from '@/lib/storage';
-import { NotFoundError, VersionConflictError, ValidationError } from '@/lib/errors';
+import { NotFoundError, VersionConflictError } from '@/lib/errors';
 
 /**
- * 校验密码条目引用的分类与标签是否真实存在。
+ * 校验密码条目引用的标签是否真实存在。
  * 自由文本标签（历史上由旧版扩展写入）会被自动注册为正式标签并替换为标签 ID。
  */
-async function resolveTagAndCategoryRefs(
-  ownerId: string,
-  refs: { categoryId?: string; tags?: string[] }
-): Promise<{ categoryId?: string; tags?: string[] }> {
-  const { findCategoryById } = await import('./categoryRepository');
-  const { findOrCreateTag } = await import('./tagRepository');
+async function resolveTagRefs(ownerId: string, tags?: string[]): Promise<string[] | undefined> {
+  if (!tags || tags.length === 0) return tags;
 
-  const categoryId = refs.categoryId;
-  if (categoryId) {
-    const category = await findCategoryById(ownerId, categoryId);
-    if (!category) {
-      throw new ValidationError(`分类 "${categoryId}" 不存在`, {
-        field: 'categoryId',
-      });
+  const { findTagById, findOrCreateTag } = await import('./tagRepository');
+  const resolved: string[] = [];
+  for (const t of tags) {
+    if (!t || !t.trim()) continue;
+    // 已是有效标签 ID 则直接使用；否则视为自由名称，自动注册为新标签
+    const asId = await findTagById(ownerId, t);
+    if (asId) {
+      resolved.push(asId.id);
+    } else {
+      const tag = await findOrCreateTag(ownerId, t.trim());
+      resolved.push(tag.id);
     }
   }
+  return [...new Set(resolved)];
+}
 
-  let tags = refs.tags;
-  if (tags && tags.length > 0) {
-    const { findTagById } = await import('./tagRepository');
-    const resolved: string[] = [];
-    for (const t of tags) {
-      if (!t || !t.trim()) continue;
-      // 已是有效标签 ID 则直接使用；否则视为自由名称，自动注册为新标签
-      const asId = await findTagById(ownerId, t);
-      if (asId) {
-        resolved.push(asId.id);
-      } else {
-        const tag = await findOrCreateTag(ownerId, t.trim());
-        resolved.push(tag.id);
-      }
-    }
-    tags = [...new Set(resolved)];
+/**
+ * 读取全部条目（含回收站）。
+ * 所有列表/导出/备份都汇聚到这里，因此分类→标签的一次性迁移也挂在这一层。
+ */
+export async function getAllPasswordEntries(ownerId: string): Promise<PasswordEntry[]> {
+  const { migrateCategoriesToTags } = await import('./tagMigration');
+  try {
+    await migrateCategoriesToTags(ownerId);
+  } catch {
+    // 迁移失败不应阻断读取：旧数据仍带 categoryId，界面忽略即可
   }
+  return readAllPasswordEntries(ownerId);
+}
 
-  return { categoryId, tags };
+async function readAllPasswordEntries(ownerId: string): Promise<PasswordEntry[]> {
+  const storage = getStorage();
+  const indexKey = KEY_PREFIXES.PASSWORDS_INDEX(ownerId);
+  const index = (await storage.get<string[]>(indexKey)) ?? [];
+
+  const entries: PasswordEntry[] = [];
+  for (const id of index) {
+    const entry = await findPasswordEntryById(ownerId, id);
+    if (entry) entries.push(entry);
+  }
+  return entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export type { EncryptedPasswordEntry } from '@/lib/types';
@@ -110,11 +122,8 @@ export async function decryptEntry(
 export async function createPasswordEntry({ ownerId, entry, encryptFn }: CreateOptions): Promise<PasswordEntry> {
   const storage = getStorage();
 
-  // 校验分类存在性，并把自由文本标签注册为正式标签（返回标签 ID 列表）
-  const resolvedRefs = await resolveTagAndCategoryRefs(ownerId, {
-    categoryId: entry.categoryId,
-    tags: entry.tags,
-  });
+  // 把自由文本标签注册为正式标签（返回标签 ID 列表）
+  const resolvedTags = await resolveTagRefs(ownerId, entry.tags);
 
   const id = nanoid();
   const now = new Date().toISOString();
@@ -136,8 +145,7 @@ export async function createPasswordEntry({ ownerId, entry, encryptFn }: CreateO
     encryptedNotes: notesEncrypted?.encrypted,
     notesIv: notesEncrypted?.iv,
     notesTag: notesEncrypted?.tag,
-    tags: resolvedRefs.tags ?? [],
-    categoryId: resolvedRefs.categoryId,
+    tags: resolvedTags ?? [],
     createdAt: now,
     updatedAt: now,
     version: 1,
@@ -172,32 +180,17 @@ export async function requirePasswordEntryById(ownerId: string, id: string): Pro
   return entry;
 }
 
-export async function getAllPasswordEntries(ownerId: string): Promise<PasswordEntry[]> {
-  const storage = getStorage();
-  const indexKey = KEY_PREFIXES.PASSWORDS_INDEX(ownerId);
-  const index = (await storage.get<string[]>(indexKey)) ?? [];
 
-  const entries: PasswordEntry[] = [];
-  for (const id of index) {
-    const entry = await findPasswordEntryById(ownerId, id);
-    if (entry) entries.push(entry);
-  }
-  return entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
 
 export async function listPasswordEntries(
   ownerId: string,
   params: PasswordListParams = {}
 ): Promise<PaginatedResponse<PasswordEntry>> {
-  const { page = 1, perPage = 50, search, categoryId, tag, trashed = false } = params;
+  const { page = 1, perPage = 50, search, tag, trashed = false } = params;
 
   let all = await getAllPasswordEntries(ownerId);
 
   all = all.filter((e) => e.trashed === trashed);
-
-  if (categoryId) {
-    all = all.filter((e) => e.categoryId === categoryId);
-  }
 
   if (tag) {
     all = all.filter((e) => e.tags.includes(tag));
@@ -212,6 +205,20 @@ export async function listPasswordEntries(
         e.username.toLowerCase().includes(query)
       );
     });
+  }
+
+  // 排序
+  if (params.sortBy === 'site_asc') {
+    all.sort((a, b) => a.site.localeCompare(b.site, 'zh-Hans-CN', { sensitivity: 'base' }));
+  } else if (params.sortBy === 'site_desc') {
+    all.sort((a, b) => b.site.localeCompare(a.site, 'zh-Hans-CN', { sensitivity: 'base' }));
+  } else if (params.sortBy === 'createdAt_desc') {
+    all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } else if (params.sortBy === 'updatedAt_asc') {
+    all.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  } else {
+    // 默认按最近更新时间倒序
+    all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   const total = all.length;
@@ -243,20 +250,15 @@ export async function updatePasswordEntry({
     throw new VersionConflictError({ expected: update.version, actual: existing.version });
   }
 
-  // 校验新的分类/标签引用（仅在本次提交中指定时）
-  const resolvedRefs = await resolveTagAndCategoryRefs(ownerId, {
-    categoryId: update.categoryId,
-    tags: update.tags,
-  });
+  // 校验新的标签引用（仅在本次提交中指定时）
+  const resolvedTags = await resolveTagRefs(ownerId, update.tags);
 
   let result: PasswordEntry = {
     ...existing,
     site: update.site ?? existing.site,
     url: update.url !== undefined ? update.url : existing.url,
     username: update.username ?? existing.username,
-    tags: resolvedRefs.tags ?? existing.tags,
-    categoryId:
-      update.categoryId !== undefined ? resolvedRefs.categoryId : existing.categoryId,
+    tags: resolvedTags ?? existing.tags,
     updatedAt: new Date().toISOString(),
     version: existing.version + 1,
   };
@@ -356,7 +358,6 @@ export async function emptyTrash(ownerId: string): Promise<{ deletedCount: numbe
 
 export async function resetVault(ownerId: string): Promise<{
   deletedPasswords: number;
-  deletedCategories: number;
   deletedTags: number;
 }> {
   const storage = getStorage();
@@ -369,15 +370,7 @@ export async function resetVault(ownerId: string): Promise<{
   }
   await storage.delete(pwIndexKey);
 
-  // 2. Delete all categories
-  const catIndexKey = `pm:${ownerId}:categories:__index__`;
-  const catIndex = (await storage.get<string[]>(catIndexKey)) ?? [];
-  for (const id of catIndex) {
-    await storage.delete(`pm:${ownerId}:categories:${id}`);
-  }
-  await storage.delete(catIndexKey);
-
-  // 3. Delete all tags
+  // 2. Delete all tags
   const tagIndexKey = `pm:${ownerId}:tags:__index__`;
   const tagIndex = (await storage.get<string[]>(tagIndexKey)) ?? [];
   for (const id of tagIndex) {
@@ -385,9 +378,16 @@ export async function resetVault(ownerId: string): Promise<{
   }
   await storage.delete(tagIndexKey);
 
+  // 3. 清理尚未迁移的旧分类键（正常情况下已被迁移器处理）
+  const catIndexKey = `pm:${ownerId}:categories:__index__`;
+  const catIndex = (await storage.get<string[]>(catIndexKey)) ?? [];
+  for (const id of catIndex) {
+    await storage.delete(`pm:${ownerId}:categories:${id}`);
+  }
+  await storage.delete(catIndexKey);
+
   return {
     deletedPasswords: pwIndex.length,
-    deletedCategories: catIndex.length,
     deletedTags: tagIndex.length,
   };
 }
@@ -427,19 +427,16 @@ export async function getPasswordEntriesForSync(
 }
 
 export async function exportAllData(ownerId: string): Promise<ExportData> {
-  const { exportCategories } = await import('./categoryRepository');
   const { exportTags } = await import('./tagRepository');
 
-  const [categories, tags, passwords] = await Promise.all([
-    exportCategories(ownerId),
+  const [tags, passwords] = await Promise.all([
     exportTags(ownerId),
     getAllPasswordEntries(ownerId),
   ]);
 
   return {
-    version: '1.0.0',
+    version: '2.0.0',
     exportedAt: new Date().toISOString(),
-    categories,
     tags,
     passwords,
   };
@@ -450,14 +447,15 @@ export interface ImportResult {
   skipped: number;
   overwritten: number;
   duplicated: number;
-  categoriesCreated: number;
+  /** 旧导出文件里的分类被转换成的标签数 */
+  tagsFromCategories: number;
   tagsCreated: number;
   errors: Array<{ id: string; message: string }>;
 }
 
 export async function importPasswords(
   ownerId: string,
-  data: ExportData,
+  data: LegacyExportData,
   strategy: 'skip' | 'overwrite' | 'duplicate'
 ): Promise<ImportResult> {
   const result: ImportResult = {
@@ -465,24 +463,46 @@ export async function importPasswords(
     skipped: 0,
     overwritten: 0,
     duplicated: 0,
-    categoriesCreated: 0,
+    tagsFromCategories: 0,
     tagsCreated: 0,
     errors: [],
   };
 
   const storage = getStorage();
 
-  // 1. 先导入分类与标签（按名称去重），得到旧 id -> 新 id 的映射
-  const { importCategories } = await import('./categoryRepository');
-  const { importTags } = await import('./tagRepository');
-  const catResult = await importCategories(ownerId, data.categories ?? []);
-  const tagResult = await importTags(ownerId, data.tags ?? []);
+  const { importTags, findOrCreateTag, getAllTags } = await import('./tagRepository');
+  const tagResult = await importTags(ownerId, (data.tags ?? []) as Tag[]);
+
+  // 兼容旧导出/旧备份：里面的 categories 会被转成同名标签
+  const legacyEntries = (data.passwords ?? []) as LegacyPasswordEntry[];
+  const categoryNames = new Map<string, string>();
+  for (const category of (data.categories ?? []) as LegacyCategory[]) {
+    if (category?.name?.trim()) categoryNames.set(category.id, category.name.trim());
+  }
+
+  // 旧分类 id -> 标签 id
+  const categoryIdToTagId = new Map<string, string>();
+  if (categoryNames.size > 0) {
+    const existing = await getAllTags(ownerId);
+    const byName = new Map(existing.map((t) => [t.name, t]));
+    for (const [categoryId, name] of categoryNames) {
+      const found = byName.get(name);
+      if (found) {
+        categoryIdToTagId.set(categoryId, found.id);
+      } else {
+        const tag = await findOrCreateTag(ownerId, name);
+        byName.set(name, tag);
+        categoryIdToTagId.set(categoryId, tag.id);
+        result.tagsFromCategories++;
+      }
+    }
+  }
 
   const indexKey = KEY_PREFIXES.PASSWORDS_INDEX(ownerId);
   const index = (await storage.get<string[]>(indexKey)) ?? [];
   const existingIds = new Set(index);
 
-  for (const entry of data.passwords) {
+  for (const entry of legacyEntries) {
     try {
       let id = entry.id;
       const entryExists = existingIds.has(id);
@@ -501,20 +521,19 @@ export async function importPasswords(
         result.imported++;
       }
 
-      // 重映射分类/标签引用到当前保险库中的真实 ID
-      const remappedCategoryId = entry.categoryId
-        ? catResult.idMap[entry.categoryId] ?? entry.categoryId
-        : undefined;
-      const remappedTags = (entry.tags ?? [])
-        .map((t) => tagResult.idMap[t] ?? t)
-        .filter((t, i, arr) => arr.indexOf(t) === i);
+      // 重映射标签引用到当前保险库中的真实 ID，
+      // 并把旧文件的分类转换成标签合并进来
+      const merged = [
+        ...(entry.tags ?? []).map((t) => tagResult.idMap[t] ?? t),
+        ...(entry.categoryId ? [categoryIdToTagId.get(entry.categoryId)] : []),
+      ].filter((t): t is string => Boolean(t)) as string[];
 
-      const importEntry: PasswordEntry = {
+      const importEntry = {
         ...entry,
         id,
-        categoryId: remappedCategoryId,
-        tags: remappedTags,
+        tags: [...new Set(merged)],
       };
+      delete importEntry.categoryId;
 
       const key = KEY_PREFIXES.PASSWORD(ownerId, id);
       await storage.put(key, importEntry);
@@ -533,7 +552,6 @@ export async function importPasswords(
 
   await storage.put(indexKey, index);
 
-  result.categoriesCreated = catResult.created;
   result.tagsCreated = tagResult.created;
 
   return result;

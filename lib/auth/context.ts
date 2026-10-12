@@ -45,8 +45,20 @@ export async function getSessionAuthContext(): Promise<AuthContext | null> {
     if (!session) return null;
 
     const masterKey = await getMasterKeyFromSession(session);
+    const ownerId = session.ownerId || 'user_default';
+
+    // 请求触发的自动备份：内部有进程内节流与到期判断，未开启时几乎无开销
+    void (async () => {
+      try {
+        const { triggerAutoBackupIfDue } = await import('@/lib/backup');
+        await triggerAutoBackupIfDue({ ownerId, masterKey });
+      } catch {
+        // 备份失败不影响主流程
+      }
+    })();
+
     return {
-      ownerId: session.ownerId || 'user_default',
+      ownerId,
       masterKey,
       sessionId,
       isSessionAuth: true,

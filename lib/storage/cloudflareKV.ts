@@ -85,9 +85,13 @@ export class CloudflareKVStorage implements KVStorage {
     await this.binding.delete(key);
   }
 
-  async list(prefix?: string): Promise<{ keys: string[]; list_complete: boolean; cursor?: string }> {
+  async list(
+    prefix?: string,
+    cursor?: string
+  ): Promise<{ keys: string[]; list_complete: boolean; cursor?: string }> {
     const result = await this.binding.list({
       prefix,
+      cursor,
       limit: 1000,
     });
     return {

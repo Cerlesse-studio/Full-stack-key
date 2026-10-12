@@ -6,7 +6,6 @@ const PUBLIC_PATHS = [
   '/api/auth/login',
   '/api/tools/generate-password',
   '/api/tools/evaluate-password',
-  '/docs',
   '/login',
   '/favicon.ico',
 ];

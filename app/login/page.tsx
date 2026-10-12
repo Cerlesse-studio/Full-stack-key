@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, Loader2, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { initAppAction, loginAction, getInitStatus } from '@/app/actions/auth';
 import { Button } from '@/components/ui/button';
@@ -114,14 +115,22 @@ export default function LoginPage() {
 
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mb-4 inline-flex size-16 items-center justify-center rounded-2xl border bg-card shadow-sm">
-            <LockKeyhole className="size-8 text-foreground" />
+          {/* logo 原图底部为深靛蓝，放白底板上才能在深色主题下保持清晰 */}
+          <div className="mb-4 inline-flex size-16 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-black/5 dark:ring-white/10">
+            <Image
+              src="/logo.png"
+              alt="Full-stack-key"
+              width={44}
+              height={44}
+              priority
+              className="size-11"
+            />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
             {isInit ? '创建密码保险库' : '解锁密码保险库'}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            {isInit ? '设置你的主密码以开始使用' : '输入主密码以继续'}
+            {isInit ? '设置管理员账号与主密码以开始使用' : '输入主密码以继续'}
           </p>
         </div>
 
@@ -133,6 +142,25 @@ export default function LoginPage() {
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
+          )}
+
+          {isInit && (
+            <div className="space-y-2">
+              <Label htmlFor="adminUsername">管理员账号名称</Label>
+              <Input
+                id="adminUsername"
+                name="adminUsername"
+                required
+                minLength={2}
+                maxLength={32}
+                autoComplete="username"
+                placeholder="例如：admin"
+                className="h-11"
+              />
+              <p className="text-xs text-muted-foreground">
+                创建后不可修改，将显示在顶栏与设置页中。
+              </p>
+            </div>
           )}
 
           <div className="space-y-2">

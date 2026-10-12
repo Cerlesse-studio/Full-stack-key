@@ -22,11 +22,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const data = validateInput(initSchema, body);
 
-    const result = await initializeApp(data.masterPassword);
+    const result = await initializeApp(data.masterPassword, data.adminUsername);
 
     return jsonSuccess({
       apiKey: result.apiKey,
       apiKeyId: result.apiKeyRecord.id,
+      adminUsername: result.adminUsername,
       message: 'Application initialized successfully. Store your API Key securely.',
       warning: 'This is the only time you will see the raw API Key. Store it safely!',
     }, undefined, { status: 201 });

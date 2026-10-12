@@ -326,6 +326,15 @@
 
       <form id="options-form">
         <div class="form-group">
+          <label for="pairCode">扫码配对（推荐）</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="pairCode" placeholder="粘贴控制台二维码里打开的配对链接" autocomplete="off" />
+            <button type="button" class="btn btn-outline" id="btn-scan" style="flex: none; white-space: nowrap;">扫码</button>
+          </div>
+          <span class="help-text">在控制台「设置 -&gt; API 密钥 -&gt; 扫码连接」生成二维码。点「扫码」会截取屏幕，在截图里框住二维码，地址与密钥会自动填好，再点保存即可</span>
+        </div>
+
+        <div class="form-group">
           <label for="apiUrl">API 服务地址</label>
           <input type="url" id="apiUrl" required placeholder="http://localhost:3000" />
           <span class="help-text">支持本地部署 (http://localhost:3000) 或线上 Cloudflare Pages 部署地址</span>

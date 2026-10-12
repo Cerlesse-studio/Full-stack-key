@@ -18,6 +18,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const setupMasterPassword = document.getElementById('setup-master-password');
   const setupFeedback = document.getElementById('setup-feedback');
   const btnSaveSetup = document.getElementById('btn-save-setup');
+  const setupPairCode = document.getElementById('setup-pair-code');
+  const btnApplyPair = document.getElementById('btn-apply-pair');
+  const btnScanPair = document.getElementById('btn-scan-pair');
 
   // Tab Navigation
   const tabTriggers = document.querySelectorAll('.tab-trigger');
@@ -34,6 +37,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const addSiteInput = document.getElementById('add-site');
   const addUsernameInput = document.getElementById('add-username');
   const addPasswordInput = document.getElementById('add-password');
+  const addTagsInput = document.getElementById('add-tags');
   const btnGenForAdd = document.getElementById('btn-gen-for-add');
 
   // Vault Tab
@@ -502,6 +506,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     addCurrentPanel.style.display = 'none';
     addUsernameInput.value = '';
     addPasswordInput.value = '';
+    if (addTagsInput) addTagsInput.value = '';
   }
 
   btnCancelAddCurrent.addEventListener('click', closeAddCurrent);
@@ -523,6 +528,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const site = addSiteInput.value.trim();
     const username = addUsernameInput.value.trim();
     const password = addPasswordInput.value.trim();
+    const rawTags = addTagsInput ? addTagsInput.value.trim() : '';
+    const tags = rawTags
+      ? rawTags
+          .split(/[,，]/)
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : [];
     const url = currentTabInfo?.url || `https://${site}`;
 
     if (!password) {
@@ -540,6 +552,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       url,
       username,
       password,
+      tags: tags.length > 0 ? tags : undefined,
     });
 
     submitBtn.disabled = false;
@@ -580,6 +593,98 @@ document.addEventListener('DOMContentLoaded', async () => {
   btnOpenWebDashboard.addEventListener('click', () => {
     const base = activeConfig?.apiUrl || 'http://localhost:3000';
     chrome.tabs.create({ url: base });
+  });
+
+  // 扫码配对：用一次性配对码换一把 API 密钥，地址和密钥都自动填好
+  // 接受两种输入：二维码里打开的完整链接（推荐），或单独一串配对码
+  function parsePairPayload(raw) {
+    const text = (raw || '').trim();
+    if (!text) return null;
+
+    if (/^https?:\/\//i.test(text)) {
+      try {
+        const url = new URL(text);
+        const token = url.searchParams.get('pair');
+        if (!token) return null;
+        return { baseUrl: url.origin, token };
+      } catch {
+        return null;
+      }
+    }
+
+    // 裸配对码：地址得由用户先填好
+    return /^[A-Za-z0-9_-]{16,128}$/.test(text) ? { baseUrl: null, token: text } : null;
+  }
+
+  function showSetupFeedback(kind, message) {
+    setupFeedback.style.display = 'block';
+    setupFeedback.className = `alert-box ${kind}`;
+    setupFeedback.textContent = message;
+  }
+
+  btnApplyPair.addEventListener('click', async () => {
+    const parsed = parsePairPayload(setupPairCode.value);
+    if (!parsed) {
+      showSetupFeedback('error', '配对链接格式不正确，请重新复制');
+      return;
+    }
+
+    const baseUrl = (parsed.baseUrl || setupApiUrl.value.trim()).replace(/\/+$/, '');
+    if (!baseUrl) {
+      showSetupFeedback('error', '请粘贴完整配对链接，或先填写 API 服务地址');
+      return;
+    }
+
+    btnApplyPair.disabled = true;
+    showSetupFeedback('info', '正在用配对码换取 API 密钥...');
+
+    try {
+      const res = await fetch(`${baseUrl}/api/pairing/redeem`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: parsed.token }),
+      });
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok || !body?.success) {
+        showSetupFeedback('error', body?.error?.message || '配对失败，请回电脑端重新生成二维码');
+        return;
+      }
+
+      setupApiUrl.value = body.data.baseUrl || baseUrl;
+      setupApiKey.value = body.data.apiKey;
+      showSetupFeedback('success', '已填好服务地址与 API 密钥，确认后点下方按钮连接');
+    } catch (err) {
+      showSetupFeedback('error', `无法连接服务器：${err instanceof Error ? err.message : '网络错误'}`);
+    } finally {
+      btnApplyPair.disabled = false;
+    }
+  });
+
+  // 截屏扫码：在新标签页里打开扫码器，它会截取屏幕并让你框出二维码，
+// 识别到配对码后由后台直接写好配置
+  btnScanPair.addEventListener('click', async () => {
+    showSetupFeedback('info', '正在打开扫码器，截取屏幕后框住电脑端的二维码即可');
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'OPEN_QR_SCANNER', mode: 'pair' });
+      if (!res || res.ok === false) {
+        showSetupFeedback('error', (res && res.error) || '无法打开扫码器');
+      }
+    } catch {
+      showSetupFeedback('error', '无法打开扫码器');
+    }
+  });
+
+  // 扫码页换到密钥后会广播，这里把设置表单同步好，省得用户再手填一遍
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message || message.type !== 'PAIR_CONNECTED') return;
+    (async () => {
+      const conf = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' }).catch(() => null);
+      if (!conf || !conf.isConfigured) return;
+      setupApiUrl.value = conf.apiUrl;
+      setupApiKey.value = conf.apiKey;
+      showSetupFeedback('success', '扫码配对成功，地址与密钥已自动填好，确认后点下方按钮连接');
+    })();
   });
 
   // Setup Form Submission

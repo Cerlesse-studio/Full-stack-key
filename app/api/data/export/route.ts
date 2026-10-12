@@ -3,7 +3,6 @@ import { handleRouteError } from '@/lib/errors';
 import { jsonSuccess } from '@/lib/utils/response';
 import { getRequestAuthContext } from '@/lib/auth/context';
 import { exportAllData } from '@/lib/repositories/passwordRepository';
-import { getAllCategories } from '@/lib/repositories/categoryRepository';
 import { getAllTags } from '@/lib/repositories/tagRepository';
 
 export const dynamic = 'force-dynamic';
@@ -12,15 +11,13 @@ export async function GET(request: NextRequest) {
   try {
     const ctx = await getRequestAuthContext(request);
 
-    const [categories, tags, exportData] = await Promise.all([
-      getAllCategories(ctx.ownerId),
+    const [tags, exportData] = await Promise.all([
       getAllTags(ctx.ownerId),
       exportAllData(ctx.ownerId),
     ]);
 
     const data = {
       ...exportData,
-      categories,
       tags,
       exportedAt: new Date().toISOString(),
     };

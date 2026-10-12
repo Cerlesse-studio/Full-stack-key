@@ -1,0 +1,21 @@
+# 无人值守备份的独立 Worker 配置（与主应用分开部署）
+#
+#   1) 把下面的 APP_URL 改成你的应用域名
+#   2) npx wrangler secret put CRON_TOKEN --config wrangler.cron.toml
+#      （值需与主应用的环境变量 CRON_TOKEN 一致）
+#   3) npx wrangler deploy --config wrangler.cron.toml
+#
+# 主应用侧还需配置 BACKUP_PASSPHRASE —— Cron 请求没有会话，
+# 无法用主密钥解包备份密码。
+
+name = "full-stack-key-backup-cron"
+main = "workers/cron-backup.ts"
+compatibility_date = "2025-01-01"
+
+[triggers]
+crons = ["0 3 * * *"] # 每天 UTC 03:00（北京时间 11:00）
+
+[vars]
+APP_URL = "https://your-domain.example.com"
+# OWNER_ID = "user_default"
+# FORCE = "false"

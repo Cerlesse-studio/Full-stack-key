@@ -21,7 +21,6 @@ export async function GET(request: NextRequest) {
       page: Number(searchParams.get('page')) || 1,
       perPage: Math.min(200, Number(searchParams.get('perPage')) || 50),
       search: searchParams.get('search') || undefined,
-      categoryId: searchParams.get('categoryId') || undefined,
       tag: searchParams.get('tag') || undefined,
       trashed: searchParams.get('trashed') === 'true',
     };
@@ -42,7 +41,6 @@ export async function GET(request: NextRequest) {
           password: '[DECRYPTION_FAILED]',
           notes: undefined,
           tags: entry.tags,
-          categoryId: entry.categoryId,
           createdAt: entry.createdAt,
           updatedAt: entry.updatedAt,
           version: entry.version,

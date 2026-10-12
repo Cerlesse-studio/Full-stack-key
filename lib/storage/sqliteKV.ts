@@ -194,6 +194,7 @@ export class SQLiteKVStorage implements KVStorage {
     db.prepare('DELETE FROM kv_store WHERE key = ?').run(key);
   }
 
+  // 一次性返回全部键，无需游标翻页
   async list(prefix?: string): Promise<{ keys: string[]; list_complete: boolean; cursor?: string }> {
     const db = await this.getDb();
     const now = Date.now();

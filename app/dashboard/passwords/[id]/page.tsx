@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Trash2,
   Wand2,
+  ExternalLink,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -20,19 +21,20 @@ import {
   updatePasswordAction,
   deletePasswordAction,
   restorePasswordAction,
-  listCategoriesAction,
   listTagsAction,
   generatePasswordAction,
 } from '@/app/actions/auth';
-import type { PasswordEntryDecrypted, Category, Tag } from '@/lib/types';
+import { TagPicker } from '@/components/tag-picker';
+import { evaluatePasswordStrength } from '@/lib/crypto';
+import type { PasswordEntryDecrypted, Tag } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,16 +53,23 @@ export default function PasswordDetailPage({ params }: { params: Promise<{ id: s
   const router = useRouter();
   const [resolvedId, setResolvedId] = useState<string | null>(null);
   const [entry, setEntry] = useState<PasswordEntryDecrypted | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+
+  // Controlled form states
+  const [site, setSite] = useState('');
+  const [url, setUrl] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [notes, setNotes] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [categoryId, setCategoryId] = useState('');
+
+  // UI states
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [strength, setStrength] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
   const [confirmPermanent, setConfirmPermanent] = useState(false);
 
   useEffect(() => {
@@ -71,50 +80,104 @@ export default function PasswordDetailPage({ params }: { params: Promise<{ id: s
     if (!resolvedId) return;
     (async () => {
       try {
-        const [e, cats, tgs] = await Promise.all([
+        const [e, tgs] = await Promise.all([
           getPasswordDetailAction(resolvedId),
-          listCategoriesAction(),
           listTagsAction(),
         ]);
         setEntry(e);
-        setSelectedTags(e.tags);
-        setCategoryId(e.categoryId || '');
-        setCategories(cats);
+        setSite(e.site);
+        setUrl(e.url || '');
+        setUsername(e.username || '');
+        setPassword(e.password);
+        setNotes(e.notes || '');
+        setSelectedTags(e.tags || []);
         setTags(tgs);
+      } catch {
+        toast.error('加载密码详情失败');
       } finally {
         setLoading(false);
       }
     })();
   }, [resolvedId]);
 
+  function cancelEdit() {
+    if (entry) {
+      setSite(entry.site);
+      setUrl(entry.url || '');
+      setUsername(entry.username || '');
+      setPassword(entry.password);
+      setNotes(entry.notes || '');
+      setSelectedTags(entry.tags || []);
+    }
+    setMode('view');
+    setError('');
+  }
+
   async function handleCopy(field: string, value: string) {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(field);
       setTimeout(() => setCopied(null), 1500);
+      toast.success('已复制到剪贴板');
     } catch {
       toast.error('复制失败');
+    }
+  }
+
+  async function handleGenerate(e: React.MouseEvent<HTMLButtonElement>) {
+    e.preventDefault();
+    try {
+      const res = await generatePasswordAction({ length: 18 });
+      setPassword(res.password);
+      toast.success('已生成新强密码');
+    } catch {
+      toast.error('生成密码失败');
     }
   }
 
   async function handleSave(e: React.FormEvent<HTMLFormElement>) {
     if (!resolvedId || !entry) return;
     e.preventDefault();
+    if (!site.trim()) {
+      setError('网站 / 应用名称不能为空');
+      return;
+    }
+    if (!password) {
+      setError('密码不能为空');
+      return;
+    }
+
     setError('');
-    const formData = new FormData(e.currentTarget);
-    formData.set('tags', selectedTags.join(','));
-    formData.set('categoryId', categoryId);
-    formData.set('version', String(entry.version));
-    const res = await updatePasswordAction(resolvedId, formData);
-    if (!res.ok) {
-      setError(res.error || '更新失败');
-    } else {
-      toast.success('已保存');
-      const updated = await getPasswordDetailAction(resolvedId);
-      setEntry(updated);
-      setSelectedTags(updated.tags);
-      setCategoryId(updated.categoryId || '');
-      setMode('view');
+    setSaving(true);
+    try {
+      const formData = new FormData();
+      formData.set('site', site.trim());
+      formData.set('url', url.trim());
+      formData.set('username', username.trim());
+      formData.set('password', password);
+      formData.set('notes', notes.trim());
+      formData.set('tags', selectedTags.join(','));
+      formData.set('version', String(entry.version));
+
+      const res = await updatePasswordAction(resolvedId, formData);
+      if (!res.ok) {
+        setError(res.error || '更新失败');
+      } else {
+        toast.success('密码已成功更新');
+        const updated = await getPasswordDetailAction(resolvedId);
+        setEntry(updated);
+        setSite(updated.site);
+        setUrl(updated.url || '');
+        setUsername(updated.username || '');
+        setPassword(updated.password);
+        setNotes(updated.notes || '');
+        setSelectedTags(updated.tags || []);
+        setMode('view');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新失败');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -141,22 +204,15 @@ export default function PasswordDetailPage({ params }: { params: Promise<{ id: s
     if (!resolvedId) return;
     try {
       await restorePasswordAction(resolvedId);
-      toast.success('已恢复');
+      toast.success('已恢复密码');
       router.push('/dashboard');
     } catch {
       toast.error('恢复失败');
     }
   }
 
-  async function handleGenerate(e: React.MouseEvent<HTMLButtonElement>) {
-    e.preventDefault();
-    const res = await generatePasswordAction();
-    const input = document.getElementById('edit-password') as HTMLInputElement | null;
-    if (input) {
-      input.value = res.password;
-      setStrength(res.strength.score);
-    }
-  }
+  // Unified password strength evaluation
+  const strengthInfo = evaluatePasswordStrength(password);
 
   if (loading || !entry) {
     return (
@@ -167,47 +223,52 @@ export default function PasswordDetailPage({ params }: { params: Promise<{ id: s
     );
   }
 
-  function scorePassword(pwd: string): number | null {
-    if (pwd.length < 1) return null;
-    let s = 0;
-    if (pwd.length >= 8) s++;
-    if (pwd.length >= 12) s++;
-    if (/[A-Z]/.test(pwd)) s++;
-    if (/[a-z]/.test(pwd)) s++;
-    if (/[0-9]/.test(pwd)) s++;
-    if (/[^A-Za-z0-9]/.test(pwd)) s++;
-    return Math.min(4, Math.floor((s * 4) / 6));
-  }
-
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl pb-12">
+      {/* 头部导航与操作 */}
       <div className="mb-6 flex items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
-          <Link href="/dashboard" aria-label="返回">
-            <ArrowLeft />
+          <Link href="/dashboard" aria-label="返回保险库">
+            <ArrowLeft className="size-4" />
           </Link>
         </Button>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-2xl font-bold tracking-tight">{entry.site}</h1>
-          {entry.url && <p className="truncate text-sm text-muted-foreground">{entry.url}</p>}
+          {entry.url && (
+            <p className="truncate text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+              <span>{entry.url}</span>
+            </p>
+          )}
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {entry.trashed ? (
-            <Button onClick={handleRestore}>
-              <RotateCcw />
+            <Button onClick={handleRestore} className="gap-1.5">
+              <RotateCcw className="size-4" />
               恢复
             </Button>
           ) : (
             <Button
               variant={mode === 'view' ? 'default' : 'outline'}
-              onClick={() => setMode(mode === 'view' ? 'edit' : 'view')}
+              onClick={() => {
+                if (mode === 'edit') {
+                  cancelEdit();
+                } else {
+                  setMode('edit');
+                }
+              }}
+              className="gap-1.5"
             >
-              <Pencil />
+              <Pencil className="size-3.5" />
               {mode === 'view' ? '编辑' : '取消'}
             </Button>
           )}
-          <Button variant="destructive" size="icon" onClick={() => askDelete(entry.trashed)} title={entry.trashed ? '永久删除' : '移入回收站'}>
-            <Trash2 />
+          <Button
+            variant="destructive"
+            size="icon"
+            onClick={() => askDelete(entry.trashed)}
+            title={entry.trashed ? '永久删除' : '移入回收站'}
+          >
+            <Trash2 className="size-4" />
             <span className="sr-only">{entry.trashed ? '永久删除' : '移入回收站'}</span>
           </Button>
         </div>
@@ -221,111 +282,137 @@ export default function PasswordDetailPage({ params }: { params: Promise<{ id: s
 
       <form onSubmit={handleSave} className="space-y-5 rounded-xl border bg-card p-6 shadow-sm md:p-8">
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+          {/* 网站名称 */}
           <div className="space-y-2 md:col-span-2">
-            <Label>网站 / 服务</Label>
+            <Label className="text-xs font-medium">网站 / 应用名称</Label>
             {mode === 'view' ? (
-              <div className="rounded-lg border bg-muted/40 px-3 py-2.5 text-sm font-medium">{entry.site}</div>
+              <div className="rounded-lg border bg-muted/40 px-3.5 py-2.5 text-sm font-medium">
+                {entry.site}
+              </div>
             ) : (
-              <Input name="site" required defaultValue={entry.site} />
+              <Input
+                name="site"
+                required
+                value={site}
+                onChange={(e) => setSite(e.target.value)}
+                placeholder="例如：GitHub"
+              />
             )}
           </div>
 
+          {/* 网址 URL */}
           <div className="space-y-2 md:col-span-2">
-            <Label>URL</Label>
+            <Label className="text-xs font-medium">网址 (URL)</Label>
             {mode === 'view' ? (
               entry.url ? (
-                <a
-                  href={entry.url.startsWith('http') ? entry.url : 'https://' + entry.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block rounded-lg border bg-muted/40 px-3 py-2.5 text-sm text-primary hover:underline"
-                >
-                  {entry.url}
-                </a>
+                <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-3.5 py-2 text-sm">
+                  <span className="truncate text-primary">{entry.url}</span>
+                  <a
+                    href={entry.url.startsWith('http') ? entry.url : 'https://' + entry.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground ml-2 shrink-0"
+                  >
+                    <span>访问</span>
+                    <ExternalLink className="size-3.5" />
+                  </a>
+                </div>
               ) : (
-                <div className="rounded-lg border bg-muted/40 px-3 py-2.5 text-sm italic text-muted-foreground">未设置</div>
+                <div className="rounded-lg border bg-muted/40 px-3.5 py-2.5 text-sm text-muted-foreground italic">
+                  未关联网址
+                </div>
               )
             ) : (
-              <Input name="url" type="url" defaultValue={entry.url || ''} />
+              <Input
+                name="url"
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://..."
+              />
             )}
           </div>
 
+          {/* 用户名 */}
           <div className="space-y-2">
-            <Label>用户名</Label>
+            <Label className="text-xs font-medium">用户名 / 账号</Label>
             {mode === 'view' ? (
               <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2">
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {entry.username || <span className="text-muted-foreground italic font-normal">(未设置用户名)</span>}
                 </span>
-                {entry.username ? (
-                  <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => handleCopy('user', entry.username)}>
-                    {copied === 'user' ? <Check className="text-green-600" /> : <Copy />}
-                    <span className="sr-only">复制用户名</span>
+                {entry.username && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    onClick={() => handleCopy('user', entry.username)}
+                    title="复制用户名"
+                  >
+                    {copied === 'user' ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
                   </Button>
-                ) : null}
+                )}
               </div>
             ) : (
-              <Input name="username" defaultValue={entry.username} placeholder="用户名（可选）" autoComplete="off" />
+              <Input
+                name="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="用户名或邮箱"
+                autoComplete="off"
+              />
             )}
           </div>
 
-          <div className="space-y-2">
-            <Label>分类</Label>
-            {mode === 'view' ? (
-              <div className="rounded-lg border bg-muted/40 px-3 py-2.5 text-sm">
-                {categories.find((c) => c.id === entry.categoryId)?.name || '无'}
-              </div>
-            ) : (
-              <Select value={categoryId || 'none'} onValueChange={(v) => setCategoryId(v === 'none' ? '' : v)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="无" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">无</SelectItem>
-                  {categories.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
+          {/* 密码 */}
           <div className="space-y-2 md:col-span-2">
-            <Label>密码</Label>
+            <Label className="text-xs font-medium">密码</Label>
             {mode === 'view' ? (
               <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2">
                 <code className="min-w-0 flex-1 break-all font-mono text-sm tracking-wide">
-                  {showPassword ? entry.password : '•'.repeat(entry.password.length)}
+                  {showPassword ? entry.password : '•'.repeat(Math.min(entry.password.length, 24))}
                 </code>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-muted-foreground"
+                  className="size-7 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowPassword(!showPassword)}
+                  title={showPassword ? '隐藏密码' : '显示密码'}
                 >
-                  {showPassword ? <EyeOff /> : <Eye />}
-                  <span className="sr-only">{showPassword ? '隐藏密码' : '显示密码'}</span>
+                  {showPassword ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                 </Button>
-                <Button type="button" variant="ghost" size="icon" className="size-7" onClick={() => handleCopy('pwd', entry.password)}>
-                  {copied === 'pwd' ? <Check className="text-green-600" /> : <Copy />}
-                  <span className="sr-only">复制密码</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-muted-foreground hover:text-foreground"
+                  onClick={() => handleCopy('pwd', entry.password)}
+                  title="复制密码"
+                >
+                  {copied === 'pwd' ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
                 </Button>
               </div>
             ) : (
-              <div>
+              <div className="space-y-2">
                 <div className="relative">
                   <Input
-                    id="edit-password"
                     name="password"
                     type={showPassword ? 'text' : 'password'}
-                    onChange={(e) => setStrength(scorePassword(e.target.value))}
-                    defaultValue={entry.password}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     autoComplete="off"
-                    className="pr-20 font-mono"
+                    className="pr-24 font-mono text-sm"
                   />
-                  <div className="absolute right-2 top-1/2 flex -translate-y-1/2 gap-1">
-                    <Button type="button" variant="secondary" size="sm" className="h-7 px-2 text-xs" onClick={handleGenerate}>
+                  <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 px-2 text-xs gap-1"
+                      onClick={handleGenerate}
+                    >
                       <Wand2 className="size-3" />
                       生成
                     </Button>
@@ -333,7 +420,7 @@ export default function PasswordDetailPage({ params }: { params: Promise<{ id: s
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="size-7 text-muted-foreground"
+                      className="size-7 text-muted-foreground hover:text-foreground"
                       onClick={() => setShowPassword(!showPassword)}
                     >
                       {showPassword ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
@@ -341,88 +428,73 @@ export default function PasswordDetailPage({ params }: { params: Promise<{ id: s
                     </Button>
                   </div>
                 </div>
-                {strength !== null && <PasswordStrength score={strength} className="mt-2" />}
+
+                {/* 密码强度指示 */}
+                <div className="space-y-1 pt-1">
+                  <PasswordStrength score={strengthInfo.score} />
+                  {strengthInfo.suggestions.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      提示: {strengthInfo.suggestions.join('，')}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </div>
 
+          {/* 备注 */}
           <div className="space-y-2 md:col-span-2">
-            <Label>备注</Label>
+            <Label className="text-xs font-medium">私密备注</Label>
             {mode === 'view' ? (
-              <div className="min-h-16 whitespace-pre-wrap rounded-lg border bg-muted/40 px-3 py-2.5 text-sm">
+              <div className="min-h-16 whitespace-pre-wrap rounded-lg border bg-muted/40 px-3.5 py-2.5 text-sm">
                 {entry.notes || <span className="italic text-muted-foreground">暂无备注</span>}
               </div>
             ) : (
-              <Textarea name="notes" rows={3} defaultValue={entry.notes || ''} className="resize-none" />
+              <Textarea
+                name="notes"
+                rows={3}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="备用码、PIN、提示问题等..."
+                className="resize-none"
+              />
             )}
           </div>
 
+          {/* 标签 */}
           <div className="space-y-2 md:col-span-2">
-            <Label>标签</Label>
-            {mode === 'view' ? (
-              <div className="flex min-h-12 flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3">
-                {entry.tags.length === 0 ? (
-                  <span className="text-sm italic text-muted-foreground">暂无标签</span>
-                ) : (
-                  entry.tags.map((tid) => {
-                    const t = tags.find((x) => x.id === tid);
-                    // 已删除/未知标签的兑底显示
-                    return (
-                      <Badge
-                        key={tid}
-                        variant="outline"
-                        style={t?.color ? { borderColor: t.color, color: t.color } : undefined}
-                        className={t ? '' : 'opacity-60'}
-                      >
-                        #{t?.name ?? '未知标签'}
-                      </Badge>
-                    );
-                  })
-                )}
-              </div>
-            ) : (
-              <div className="flex min-h-12 flex-wrap gap-2 rounded-lg border border-input bg-transparent p-3">
-                {tags.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() =>
-                      setSelectedTags((prev) =>
-                        prev.includes(t.id) ? prev.filter((x) => x !== t.id) : [...prev, t.id]
-                      )
-                    }
-                    style={t.color && selectedTags.includes(t.id) ? { borderColor: t.color, color: t.color } : undefined}
-                  >
-                    <Badge variant={selectedTags.includes(t.id) ? 'default' : 'outline'} className="cursor-pointer select-none">
-                      #{t.name}
-                    </Badge>
-                  </button>
-                ))}
-              </div>
-            )}
+            <Label className="text-xs font-medium">标签</Label>
+            <TagPicker
+              tags={tags}
+              value={selectedTags}
+              onChange={setSelectedTags}
+              readOnly={mode === 'view'}
+            />
           </div>
         </div>
 
+        {/* 元数据时间 */}
         <div className="space-y-1 border-t pt-4 text-xs text-muted-foreground">
-          <div>创建于:{new Date(entry.createdAt).toLocaleString()}</div>
+          <div>创建于：{new Date(entry.createdAt).toLocaleString()}</div>
           <div>
-            更新于:{new Date(entry.updatedAt).toLocaleString()} · 版本 {entry.version}
+            更新于：{new Date(entry.updatedAt).toLocaleString()} · 版本 {entry.version}
           </div>
-          {entry.trashedAt && <div>删除于:{new Date(entry.trashedAt).toLocaleString()}</div>}
+          {entry.trashedAt && <div>删除于：{new Date(entry.trashedAt).toLocaleString()}</div>}
         </div>
 
         {mode === 'edit' && (
-          <div className="flex gap-3 pt-2">
-            <Button type="button" variant="outline" onClick={() => setMode('view')}>
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" onClick={cancelEdit} disabled={saving}>
               取消
             </Button>
-            <Button type="submit" className="flex-1 md:flex-none md:px-8">
-              保存修改
+            <Button type="submit" disabled={saving} className="min-w-28">
+              {saving ? '保存中...' : '保存修改'}
             </Button>
           </div>
         )}
       </form>
 
+      {/* 永久删除确认弹窗 */}
       <AlertDialog open={confirmPermanent} onOpenChange={setConfirmPermanent}>
         <AlertDialogContent>
           <AlertDialogHeader>

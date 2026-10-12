@@ -1,39 +1,49 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import {
-  BookOpen,
+  Archive,
   Database,
-  Folder,
-  FolderTree,
   KeyRound,
+  Lock,
   LogOut,
   Menu,
   Settings2,
   ShieldCheck,
+  Tags,
 } from 'lucide-react';
 import { logoutAction } from '@/app/actions/auth';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { SessionLockProvider } from '@/components/session-lock-provider';
 import { cn } from '@/lib/utils/cn';
-import type { Category, Tag } from '@/lib/types';
+import type { Tag } from '@/lib/types';
 
 const navItems = [
   { href: '/dashboard', label: '全部密码', icon: KeyRound },
-  { href: '/dashboard/categories', label: '分类与标签', icon: FolderTree },
+  { href: '/dashboard/tags', label: '标签管理', icon: Tags },
   { href: '/dashboard/database', label: '数据库监控', icon: Database },
+  { href: '/dashboard/backups', label: '备份管理', icon: Archive },
   { href: '/dashboard/settings', label: '设置', icon: Settings2 },
-  { href: '/docs', label: 'API 文档', icon: BookOpen },
 ];
 
 function VaultLogo() {
   return (
     <Link href="/dashboard" className="flex items-center gap-3 px-2">
-      <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-        <ShieldCheck className="size-5" />
+      {/* logo 原图底部为深靛蓝，放白底板上才能在深色主题下保持清晰 */}
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-black/5 dark:ring-white/10">
+        <Image
+          src="/logo.png"
+          alt="Full-stack-key"
+          width={28}
+          height={28}
+          priority
+          className="size-7"
+        />
       </div>
       <div>
         <div className="font-semibold tracking-tight">密码保险库</div>
@@ -52,8 +62,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         const active =
           href === '/dashboard'
             ? pathname === '/dashboard'
-            : href === '/dashboard/categories'
-              ? pathname.startsWith('/dashboard/categories') || pathname.startsWith('/dashboard/tags')
+            : href === '/dashboard/tags'
+              ? pathname.startsWith('/dashboard/tags') || pathname.startsWith('/dashboard/categories')
               : pathname.startsWith(href);
         return (
           <Link
@@ -76,51 +86,21 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function SidebarMetaSection({
-  categories,
+function SidebarTagsSection({
   tags,
   onNavigate,
 }: {
-  categories: Category[];
   tags: Tag[];
   onNavigate?: () => void;
 }) {
   return (
     <>
-      {categories.length > 0 && (
-        <div className="mt-6">
-          <div className="mb-2 flex items-center justify-between px-3 text-xs font-medium text-muted-foreground">
-            <span>分类</span>
-            <Link
-              href="/dashboard/categories?tab=categories"
-              onClick={onNavigate}
-              className="text-[11px] text-muted-foreground/80 hover:text-foreground transition-colors"
-            >
-              管理
-            </Link>
-          </div>
-          <div className="space-y-1">
-            {categories.slice(0, 8).map((category) => (
-              <Link
-                key={category.id}
-                href={`/dashboard?categoryId=${category.id}`}
-                onClick={onNavigate}
-                className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-              >
-                <Folder className="size-4" />
-                <span className="truncate">{category.name}</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
       {tags.length > 0 && (
         <div className="mt-6">
           <div className="mb-2 flex items-center justify-between px-3 text-xs font-medium text-muted-foreground">
             <span>常用标签</span>
             <Link
-              href="/dashboard/categories?tab=tags"
+              href="/dashboard/tags"
               onClick={onNavigate}
               className="text-[11px] text-muted-foreground/80 hover:text-foreground transition-colors"
             >
@@ -172,21 +152,23 @@ function SidebarFooter() {
 }
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-  const [meta, setMeta] = useState<{ categories: Category[]; tags: Tag[] }>({
-    categories: [],
+  const [meta, setMeta] = useState<{ tags: Tag[] }>({
     tags: [],
   });
+  const [adminUsername, setAdminUsername] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { listCategoriesAction, listTagsAction } = await import('@/app/actions/auth');
-      const [categories, tags] = await Promise.all([
-        listCategoriesAction().catch(() => []),
+      const { listTagsAction, getAdminProfileAction } = await import('@/app/actions/auth');
+      const [tags, profile] = await Promise.all([
         listTagsAction().catch(() => []),
+        getAdminProfileAction().catch(() => null),
       ]);
-      if (!cancelled) setMeta({ categories, tags });
+      if (cancelled) return;
+      setMeta({ tags });
+      if (profile) setAdminUsername(profile.adminUsername);
     })();
     return () => {
       cancelled = true;
@@ -194,52 +176,65 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-1 flex-col bg-background text-foreground lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
-      {/* 桌面侧边栏 */}
-      <aside className="hidden flex-col border-r bg-card px-4 py-5 lg:flex lg:min-h-screen">
-        <VaultLogo />
-        <div className="mb-2 mt-8 px-3 text-xs font-medium text-muted-foreground">工作区</div>
-        <SidebarNav />
-        <SidebarMetaSection {...meta} />
-        <SidebarFooter />
-      </aside>
+    <SessionLockProvider>
+      <div className="flex min-h-screen flex-1 flex-col bg-background text-foreground lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
+        {/* 桌面侧边栏 */}
+        <aside className="hidden flex-col border-r bg-card px-4 py-5 lg:flex lg:min-h-screen">
+          <VaultLogo />
+          <div className="mb-2 mt-8 px-3 text-xs font-medium text-muted-foreground">工作区</div>
+          <SidebarNav />
+          <SidebarTagsSection {...meta} />
+          <SidebarFooter />
+        </aside>
 
-      <main className="min-w-0 flex-1">
-        <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-3 border-b bg-background/80 px-4 backdrop-blur md:px-8">
-          <div className="flex items-center gap-2">
-            {/* 移动端抽屉导航 */}
-            <Sheet open={open} onOpenChange={setOpen}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="lg:hidden" aria-label="打开菜单">
-                  <Menu className="size-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-72 gap-0 overflow-y-auto px-4 py-5">
-                <SheetTitle className="sr-only">导航菜单</SheetTitle>
-                <VaultLogo />
-                <div className="mt-8" />
-                <SidebarNav onNavigate={() => setOpen(false)} />
-                <SidebarMetaSection {...meta} onNavigate={() => setOpen(false)} />
-                <div className="mt-6">
-                  <SidebarFooter />
-                </div>
-              </SheetContent>
-            </Sheet>
-            <div className="hidden text-sm text-muted-foreground md:block">
-              个人工作区 <span className="mx-2 text-muted-foreground/50">/</span>
-              <span className="text-foreground">保险库</span>
+        <main className="min-w-0 flex-1">
+          <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-3 border-b bg-background/80 px-4 backdrop-blur md:px-8">
+            <div className="flex items-center gap-2">
+              {/* 移动端抽屉导航 */}
+              <Sheet open={open} onOpenChange={setOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="ghost" size="icon" className="lg:hidden" aria-label="打开菜单">
+                    <Menu className="size-5" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-72 gap-0 overflow-y-auto px-4 py-5">
+                  <SheetTitle className="sr-only">导航菜单</SheetTitle>
+                  <VaultLogo />
+                  <div className="mt-8" />
+                  <SidebarNav onNavigate={() => setOpen(false)} />
+                  <SidebarTagsSection {...meta} onNavigate={() => setOpen(false)} />
+                  <div className="mt-6">
+                    <SidebarFooter />
+                  </div>
+                </SheetContent>
+              </Sheet>
+              <div className="hidden text-sm text-muted-foreground md:block">
+                {adminUsername ?? '个人工作区'}{' '}
+                <span className="mx-2 text-muted-foreground/50">/</span>
+                <span className="text-foreground">保险库</span>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="hidden items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex">
-              <ShieldCheck className="size-3.5" />
-              安全连接
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => window.dispatchEvent(new CustomEvent('keyvault-lock-screen'))}
+                title="锁定当前会话"
+              >
+                <Lock className="size-3.5" />
+                <span className="hidden sm:inline">锁定</span>
+              </Button>
+              <div className="hidden items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex">
+                <ShieldCheck className="size-3.5" />
+                安全连接
+              </div>
+              <ThemeToggle />
             </div>
-            <ThemeToggle />
-          </div>
-        </header>
-        <div className="mx-auto w-full max-w-7xl p-4 md:p-8">{children}</div>
-      </main>
-    </div>
+          </header>
+          <div className="mx-auto w-full max-w-7xl p-4 md:p-8">{children}</div>
+        </main>
+      </div>
+    </SessionLockProvider>
   );
 }

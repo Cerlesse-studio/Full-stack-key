@@ -1,6 +1,5 @@
 import type {
   PasswordEntryDecrypted,
-  Category,
   Tag,
   PaginatedResponse,
   ExportData,
@@ -62,7 +61,6 @@ export const api = {
       page?: number;
       perPage?: number;
       search?: string;
-      categoryId?: string;
       tag?: string;
       trashed?: boolean;
     }) => request<PaginatedResponse<PasswordEntryDecrypted>>('/passwords', {}, params),
@@ -76,7 +74,6 @@ export const api = {
       password: string;
       notes?: string;
       tags?: string[];
-      categoryId?: string;
     }) =>
       request<PasswordEntryDecrypted>('/passwords', {
         method: 'POST',
@@ -92,7 +89,6 @@ export const api = {
         password?: string;
         notes?: string;
         tags?: string[];
-        categoryId?: string;
         version: number;
       }
     ) =>
@@ -110,15 +106,6 @@ export const api = {
 
     restore: (id: string) =>
       request<PasswordEntryDecrypted>(`/passwords/${id}/restore`, { method: 'POST' }),
-  },
-
-  categories: {
-    list: () => request<Category[]>('/categories'),
-    create: (name: string) =>
-      request<Category>('/categories', { method: 'POST', body: JSON.stringify({ name }) }),
-    update: (id: string, name: string) =>
-      request<Category>(`/categories/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
-    delete: (id: string) => request(`/categories/${id}`, { method: 'DELETE' }),
   },
 
   tags: {

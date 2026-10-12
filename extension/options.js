@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const masterPasswordInput = document.getElementById('masterPassword');
   const btnTest = document.getElementById('btn-test');
   const btnSave = document.getElementById('btn-save');
+  const btnScan = document.getElementById('btn-scan');
   const feedback = document.getElementById('feedback');
 
   function showFeedback(msg, type = 'info') {
@@ -22,6 +23,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   apiUrlInput.value = config.apiUrl || 'http://localhost:3000';
   apiKeyInput.value = config.apiKey || '';
   masterPasswordInput.value = config.masterPassword || '';
+
+  // 截屏扫码配对：在新标签页里打开扫码器，它换到密钥后会广播 PAIR_CONNECTED
+  btnScan.addEventListener('click', async () => {
+    showFeedback('正在打开扫码器，截取屏幕后框住电脑端的二维码即可', 'info');
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'OPEN_QR_SCANNER', mode: 'pair' });
+      if (!res || res.ok === false) showFeedback(res?.error || '无法打开扫码器', 'error');
+    } catch {
+      showFeedback('无法打开扫码器', 'error');
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message || message.type !== 'PAIR_CONNECTED') return;
+    (async () => {
+      const conf = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' }).catch(() => null);
+      if (!conf || !conf.isConfigured) return;
+      apiUrlInput.value = conf.apiUrl;
+      apiKeyInput.value = conf.apiKey;
+      showFeedback('扫码配对成功，地址与密钥已自动填好，点「保存配置」生效', 'success');
+    })();
+  });
 
   // Test connection
   btnTest.addEventListener('click', async () => {

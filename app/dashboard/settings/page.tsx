@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Download,
@@ -13,7 +13,6 @@ import {
   RefreshCw,
   Check,
   Copy,
-  Folder,
   Tag as TagIcon,
   AlertTriangle,
   Trash2,
@@ -30,8 +29,11 @@ import {
   getDataMetricsAction,
   type DataMetrics,
   emptyTrashAction,
-  resetVaultAction,
+  factoryResetAction,
+  getAdminProfileAction,
 } from '@/app/actions/auth';
+import { createPreResetBackupAction } from '@/app/actions/backup';
+import { QrPairingCard } from '@/components/qr-pairing-card';
 import type { ExportData } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,6 +41,14 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -72,10 +82,18 @@ export default function SettingsPage() {
   const [emptyTrashLoading, setEmptyTrashLoading] = useState(false);
   const [openResetVaultDialog, setOpenResetVaultDialog] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
+  const [adminUsername, setAdminUsername] = useState<string | null>(null);
+  const [resetMasterPassword, setResetMasterPassword] = useState('');
   const [resetVaultLoading, setResetVaultLoading] = useState(false);
   const [dataMetrics, setDataMetrics] = useState<DataMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
+
+  // 导入策略选择弹窗状态
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [importStrategy, setImportStrategy] = useState<'skip' | 'overwrite' | 'duplicate'>('skip');
+  const [importLoading, setImportLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function loadKeys() {
     const data = await listApiKeysAction();
@@ -111,6 +129,11 @@ export default function SettingsPage() {
     listApiKeysAction()
       .then((data) => {
         if (!cancelled) setApiKeys(data as ApiKeyRow[]);
+      })
+      .catch(() => {});
+    getAdminProfileAction()
+      .then((profile) => {
+        if (!cancelled) setAdminUsername(profile.adminUsername);
       })
       .catch(() => {});
     getDataMetricsAction()
@@ -165,8 +188,8 @@ export default function SettingsPage() {
     if (!res.ok) {
       toast.error(res.error || '修改失败');
     } else {
-      toast.success('主密码已修改，请重新登录。');
-      setTimeout(() => router.push('/login'), 1500);
+      toast.success('主密码已修改成功，即将跳转至登录页面...');
+      setTimeout(() => router.push('/login'), 1200);
     }
   }
 
@@ -176,36 +199,45 @@ export default function SettingsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `password-export-${Date.now()}.json`;
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    a.download = `vault-backup-${dateStr}.json`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success('数据已导出');
   }
 
-  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const strategy = (prompt('导入策略？（skip / overwrite / duplicate）', 'skip') || 'skip') as
-      | 'skip'
-      | 'overwrite'
-      | 'duplicate';
-    if (!['skip', 'overwrite', 'duplicate'].includes(strategy)) return;
+    setPendingImportFile(file);
+    setImportStrategy('skip');
+  }
+
+  async function executeImport() {
+    if (!pendingImportFile) return;
+    setImportLoading(true);
     try {
-      const text = await file.text();
+      const text = await pendingImportFile.text();
       const data = JSON.parse(text) as ExportData;
-      if (!data.passwords || !Array.isArray(data.passwords)) throw new Error('文件格式无效');
-      const res = await importDataAction(data, strategy);
+      if (!data.passwords || !Array.isArray(data.passwords)) {
+        throw new Error('导入文件格式无效，请确保是本系统导出的 JSON 备份文件');
+      }
+      const res = await importDataAction(data, importStrategy);
       const metaParts: string[] = [];
-      if (res.categoriesCreated > 0) metaParts.push(`新分类 ${res.categoriesCreated}`);
+      if (res.tagsFromCategories > 0) metaParts.push(`分类转标签 ${res.tagsFromCategories}`);
       if (res.tagsCreated > 0) metaParts.push(`新标签 ${res.tagsCreated}`);
       toast.success(
         `导入完成：新增 ${res.imported}，跳过 ${res.skipped}，覆盖 ${res.overwritten}，重复 ${res.duplicated}` +
           (metaParts.length > 0 ? `（${metaParts.join('，')}）` : '')
       );
-      e.target.value = '';
+      setPendingImportFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      loadMetrics(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '导入失败');
-      e.target.value = '';
+    } finally {
+      setImportLoading(false);
     }
   }
 
@@ -226,6 +258,19 @@ export default function SettingsPage() {
 
         {/* 安全 */}
         <TabsContent value="general" className="mt-4">
+          <div className="mb-5 flex flex-col gap-2 rounded-xl border bg-card p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-semibold">管理员账号</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                创建保险库时设定，用于标识保险库归属，创建后不可修改。
+              </p>
+            </div>
+            <div className="flex size-fit items-center gap-2 rounded-lg bg-muted px-3 py-1.5 text-sm font-medium">
+              <ShieldCheck className="size-4 text-muted-foreground" />
+              {adminUsername ?? '加载中...'}
+            </div>
+          </div>
+
           <div className="space-y-5 rounded-xl border bg-card p-6 shadow-sm">
             <div>
               <h2 className="font-semibold">修改主密码</h2>
@@ -254,6 +299,8 @@ export default function SettingsPage() {
         {/* API 密钥 */}
         <TabsContent value="apikeys" className="mt-4">
           <div className="space-y-4">
+            <QrPairingCard />
+
             <div className="space-y-4 rounded-xl border bg-card p-6 shadow-sm">
               <h2 className="font-semibold">创建新的 API 密钥</h2>
               <form onSubmit={handleCreateKey} className="flex gap-3">
@@ -520,13 +567,6 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex items-center justify-between rounded-lg bg-muted/40 p-2.5">
                     <span className="flex items-center gap-2 text-muted-foreground">
-                      <Folder className="size-3.5 text-foreground" />
-                      自定义分类
-                    </span>
-                    <span className="font-semibold">{dataMetrics.counts.categories} 个</span>
-                  </div>
-                  <div className="flex items-center justify-between rounded-lg bg-muted/40 p-2.5">
-                    <span className="flex items-center gap-2 text-muted-foreground">
                       <TagIcon className="size-3.5 text-foreground" />
                       自定义标签
                     </span>
@@ -564,8 +604,14 @@ export default function SettingsPage() {
               </h2>
               <p className="text-sm text-muted-foreground">从之前导出的 JSON 备份文件恢复或合并数据。</p>
               <label className="flex h-10 w-full cursor-pointer items-center justify-center rounded-lg border border-dashed border-input text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground">
-                <input type="file" accept=".json" onChange={handleImport} className="hidden" />
-                选择 JSON 文件...
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportFileChange}
+                  className="hidden"
+                />
+                {pendingImportFile ? pendingImportFile.name : '选择 JSON 文件...'}
               </label>
             </div>
           </div>
@@ -599,19 +645,22 @@ export default function SettingsPage() {
 
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-3 border-t">
                 <div>
-                  <div className="font-medium">重置整个保险库</div>
-                  <div className="text-xs text-muted-foreground">删除所有密码、分类和标签，保留主密码与 API 密钥</div>
+                  <div className="font-medium">恢复出厂设置</div>
+                  <div className="text-xs text-muted-foreground">
+                    删除所有密码、分类和标签，并<strong className="text-foreground">重置主密码与全部 API 密钥</strong>，需重新初始化
+                  </div>
                 </div>
                 <Button
                   variant="outline"
                   className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive sm:w-auto w-full"
                   onClick={() => {
                     setResetConfirmText('');
+                    setResetMasterPassword('');
                     setOpenResetVaultDialog(true);
                   }}
                 >
                   <AlertTriangle className="size-4" />
-                  重置保险库
+                  恢复出厂设置
                 </Button>
               </div>
             </div>
@@ -660,12 +709,13 @@ export default function SettingsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 重置整个保险库确认 */}
+      {/* 恢复出厂设置确认 */}
       <AlertDialog
         open={openResetVaultDialog}
         onOpenChange={(open) => {
           if (!open) {
             setResetConfirmText('');
+            setResetMasterPassword('');
             setOpenResetVaultDialog(false);
           }
         }}
@@ -674,16 +724,20 @@ export default function SettingsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-destructive flex items-center gap-2">
               <AlertTriangle className="size-5" />
-              危险：确认重置整个保险库？
+              危险：确认恢复出厂设置？
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
                   此操作将<strong className="text-foreground">永久删除保险库中所有的密码记录（包括回收站）、全部自定义分类与标签</strong>。
                 </p>
-                <p className="text-xs">
-                  注意：您的主登录密码和 API 密钥仍将保留，操作完成后保险库将完全恢复为空白状态。
+                <p>
+                  同时会<strong className="text-destructive">重置管理员主密码、吊销全部 API 密钥并退出所有登录设备</strong>。
+                  完成后保险库回到未初始化状态，需要重新设置新的主密码。
                 </p>
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                  此操作不可撤销，请先在「数据管理」中导出备份。
+                </div>
                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
                   为防止误触，请在下方输入 <span className="font-bold underline">重置</span> 或{' '}
                   <span className="font-bold underline font-mono">RESET</span> 以确认执行：
@@ -695,6 +749,16 @@ export default function SettingsPage() {
                   className="font-mono text-sm"
                   autoFocus
                 />
+                <div className="text-xs text-muted-foreground">
+                  最后请输入当前主密码，以确认是你本人操作：
+                </div>
+                <Input
+                  type="password"
+                  value={resetMasterPassword}
+                  onChange={(e) => setResetMasterPassword(e.target.value)}
+                  placeholder="当前主密码"
+                  autoComplete="current-password"
+                />
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -703,6 +767,7 @@ export default function SettingsPage() {
             <AlertDialogAction
               disabled={
                 resetVaultLoading ||
+                !resetMasterPassword ||
                 (resetConfirmText.trim() !== '重置' && resetConfirmText.trim().toUpperCase() !== 'RESET')
               }
               className="bg-destructive text-white hover:bg-destructive/90 disabled:opacity-50"
@@ -710,21 +775,34 @@ export default function SettingsPage() {
                 e.preventDefault();
                 setResetVaultLoading(true);
                 try {
-                  const res = await resetVaultAction();
-                  toast.success(
-                    `保险库已重置：已清空 ${res.deletedPasswords} 条密码、${res.deletedCategories} 个分类、${res.deletedTags} 个标签`
-                  );
+                  // 重置前先尝试留一份加密备份（无可用备份密码时自动跳过）
+                  const pre = await createPreResetBackupAction().catch(() => null);
+                  if (pre?.ok) {
+                    toast.success('已在重置前创建加密备份');
+                  } else if (pre && !pre.skipped && pre.reason) {
+                    toast.warning(`重置前备份失败：${pre.reason}`);
+                  } else if (pre?.skipped) {
+                    toast.warning(`${pre.reason}，继续执行重置`);
+                  }
+
+                  const res = await factoryResetAction(resetMasterPassword);
                   setOpenResetVaultDialog(false);
                   setResetConfirmText('');
+                  setResetMasterPassword('');
+                  toast.success(
+                    `保险库已恢复出厂设置：共清除 ${res.deletedKeys} 项数据，主密码与 API 密钥已重置`
+                  );
+                  // 会话已被清除，回到登录页重新设置主密码
+                  router.push('/login');
                   router.refresh();
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : '重置保险库失败');
+                  toast.error(err instanceof Error ? err.message : '恢复出厂设置失败');
                 } finally {
                   setResetVaultLoading(false);
                 }
               }}
             >
-              {resetVaultLoading ? '正在重置...' : '确认重置保险库'}
+              {resetVaultLoading ? '正在重置...' : '确认恢复出厂设置'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -772,6 +850,127 @@ export default function SettingsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 导入策略选择弹窗（替代原生 prompt） */}
+      <Dialog
+        open={!!pendingImportFile}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingImportFile(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="size-5 text-primary" />
+              <span>导入数据策略选择</span>
+            </DialogTitle>
+            <DialogDescription>
+              已选取文件：
+              <span className="font-mono text-foreground font-medium">
+                {pendingImportFile?.name}
+              </span>
+              。当导入记录与现有密码（相同网站与用户名）存在冲突时，请指定合并策略：
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {/* Skip */}
+            <div
+              onClick={() => setImportStrategy('skip')}
+              className={`cursor-pointer rounded-xl border p-4 transition-all ${
+                importStrategy === 'skip'
+                  ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                  : 'hover:border-border/80 hover:bg-muted/40'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm">跳过冲突 (推荐)</span>
+                <span className="text-xs rounded-full bg-primary/10 px-2 py-0.5 text-primary font-medium">
+                  安全无损
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                若保险库中已存在相同网站和用户名的记录，则保留现有条目不变，仅导入全新凭据。
+              </p>
+            </div>
+
+            {/* Overwrite */}
+            <div
+              onClick={() => setImportStrategy('overwrite')}
+              className={`cursor-pointer rounded-xl border p-4 transition-all ${
+                importStrategy === 'overwrite'
+                  ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                  : 'hover:border-border/80 hover:bg-muted/40'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm">覆盖更新</span>
+                <span className="text-xs rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-600 font-medium">
+                  覆盖修改
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                若存在相同网站和用户名，将以导入文件中的密码、网址及备注直接覆盖现有数据。
+              </p>
+            </div>
+
+            {/* Duplicate */}
+            <div
+              onClick={() => setImportStrategy('duplicate')}
+              className={`cursor-pointer rounded-xl border p-4 transition-all ${
+                importStrategy === 'duplicate'
+                  ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                  : 'hover:border-border/80 hover:bg-muted/40'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm">保留并创建副本</span>
+                <span className="text-xs rounded-full bg-muted px-2 py-0.5 text-muted-foreground font-medium">
+                  全部并存
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                跳过查重检查，将导入文件中的每一条记录均作为全新条目独立保存至保险库。
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setPendingImportFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+              disabled={importLoading}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              onClick={executeImport}
+              disabled={importLoading}
+              className="gap-2"
+            >
+              {importLoading ? (
+                <>
+                  <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  <span>正在导入...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="size-4" />
+                  <span>开始导入</span>
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

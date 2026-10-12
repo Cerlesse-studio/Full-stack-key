@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!--
+  截屏扫码实测页（内容脚本侧）
+
+  浏览器里装不了扩展时，用这页把 content.js / qr-capture.js / vendor/jsQR 真正跑起来，
+  只把 chrome.* 换成 fake-chrome.js 里的假实现，伪后台会用 canvas 造一张
+  “大截图”（二维码画在角落）当作 captureVisibleTab 的返回。
+
+  跑之前先把扩展文件复制到 .tmpext/（这个目录不入库，用完可删）：
+
+    mkdir -p test-pages/.tmpext/vendor
+    cp extension/content.js extension/content.css \
+       extension/qr-capture.js extension/qr-capture.css test-pages/.tmpext/
+    cp extension/vendor/jsQR.min.js test-pages/.tmpext/vendor/
+
+  然后：
+
+    node test-pages/serve.mjs 4200
+    # 浏览器打开 http://127.0.0.1:4200/screen-scan-test.html
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>截屏扫码 · 内容脚本实测</title>
+  <link rel="stylesheet" href=".tmpext/content.css" />
+  <link rel="stylesheet" href=".tmpext/qr-capture.css" />
+  <style>
+    body { margin: 0; padding: 28px; font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: #09090b; background: #fafafa; }
+    .card { width: 340px; padding: 20px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; }
+    .card h2 { margin: 0 0 14px; font-size: 15px; }
+    label { display: block; margin: 12px 0 4px; font-size: 12.5px; color: #71717a; }
+    input[type="text"], input[type="password"] { width: 100%; height: 38px; padding: 0 36px 0 10px; border: 1px solid #d4d4d8; border-radius: 8px; font: inherit; box-sizing: border-box; }
+    .side { margin-top: 24px; padding: 16px; border: 1px dashed #d4d4d8; border-radius: 12px; }
+    img { width: 180px; height: 180px; }
+  </style>
+</head>
+<body>
+  <form class="card" id="login-form" onsubmit="return false">
+    <h2>登录</h2>
+    <label for="user">用户名</label>
+    <input type="text" id="user" name="username" autocomplete="username" />
+    <label for="pwd">密码</label>
+    <input type="password" id="pwd" name="password" autocomplete="current-password" />
+  </form>
+
+  <!-- 模拟「屏幕另一处显示着二维码」 -->
+  <div class="side">
+    <p>这块区域模拟电脑端设置页里的扫码配对卡片：</p>
+    <img id="qr" src="/qr-pair.png" alt="qr" />
+    <button type="button" id="swap">换一张二维码</button>
+  </div>
+
+  <!-- 伪 chrome（伪后台会生成截图并处理 REDEEM_PAIR_TOKEN） -->
+  <script src="/fake-chrome.js"></script>
+  <script src="/.tmpext/vendor/jsQR.min.js"></script>
+  <script src="/.tmpext/qr-capture.js"></script>
+  <script src="/.tmpext/content.js"></script>
+  <script>
+    document.getElementById('swap').addEventListener('click', function () {
+      window.__testQrKind = window.__testQrKind === 'pair' ? 'plain' : 'pair';
+      document.getElementById('qr').src = '/qr-' + window.__testQrKind + '.png';
+    });
+  </script>
+</body>
+</html>

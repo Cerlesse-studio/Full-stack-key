@@ -10,7 +10,6 @@ export interface PasswordEntry {
   notesIv?: string;
   notesTag?: string;
   tags: string[];
-  categoryId?: string;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -32,7 +31,6 @@ export interface PasswordEntryInput {
   password: string;
   notes?: string;
   tags?: string[];
-  categoryId?: string;
 }
 
 export interface PasswordEntryUpdate {
@@ -42,15 +40,7 @@ export interface PasswordEntryUpdate {
   password?: string;
   notes?: string;
   tags?: string[];
-  categoryId?: string;
   version: number;
-}
-
-export interface Category {
-  id: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface Tag {
@@ -60,6 +50,24 @@ export interface Tag {
   createdAt: string;
 }
 
+/**
+ * 旧版（分类与标签并存）的数据形态。
+ * 分类已合并为标签，这里只用于一次性迁移与旧导出/旧备份的兼容读取。
+ */
+export interface LegacyCategory {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LegacyPasswordEntry = PasswordEntry & { categoryId?: string };
+
+export type LegacyExportData = Omit<ExportData, 'categories' | 'tags'> & {
+  categories?: LegacyCategory[];
+  tags?: unknown[];
+};
+
 export interface ApiKey {
   id: string;
   keyHash: string;
@@ -67,6 +75,12 @@ export interface ApiKey {
   createdAt: string;
   lastUsedAt?: string;
   revoked: boolean;
+  /**
+   * 这把 Key 所属的保险库归属。
+   * 旧版本没有这个字段，读取时回退到 `user_<apiKeyId 前 12 位>`；
+   * 扫码配对产生的 Key 会显式写入同一个 ownerId，客户端才能看到同一份数据。
+   */
+  ownerId?: string;
 }
 
 export interface AppConfig {
@@ -77,6 +91,11 @@ export interface AppConfig {
   pbkdf2Iterations: number;
   createdAt: string;
   apiKeys: ApiKey[];
+  /**
+   * 管理员账号名称，创建保险库时必填。
+   * 旧版本创建的保险库没有该字段，读取时需容忍 undefined。
+   */
+  adminUsername?: string;
 }
 
 export interface PaginationParams {
@@ -86,9 +105,9 @@ export interface PaginationParams {
 
 export interface PasswordListParams extends PaginationParams {
   search?: string;
-  categoryId?: string;
   tag?: string;
   trashed?: boolean;
+  sortBy?: 'updatedAt_desc' | 'updatedAt_asc' | 'site_asc' | 'site_desc' | 'createdAt_desc';
 }
 
 export interface PaginatedResponse<T> {
@@ -113,7 +132,6 @@ export interface ImportOptions {
 export interface ExportData {
   version: string;
   exportedAt: string;
-  categories: Category[];
   tags: Tag[];
   passwords: PasswordEntry[];
 }

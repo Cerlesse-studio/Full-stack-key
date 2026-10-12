@@ -50,6 +50,7 @@ export class MemoryKVStorage implements KVStorage {
     this.store.delete(key);
   }
 
+  // 一次性返回全部键，无需游标翻页
   async list(prefix?: string): Promise<{ keys: string[]; list_complete: boolean; cursor?: string }> {
     const allKeys = Array.from(this.store.keys());
     const now = Date.now();

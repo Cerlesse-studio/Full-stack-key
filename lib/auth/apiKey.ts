@@ -79,7 +79,10 @@ export async function validateApiKey(apiKeyStr: string): Promise<ValidatedApiKey
   };
 }
 
-export async function generateApiKeyRecord(name: string): Promise<{ apiKey: string; record: ApiKey }> {
+export async function generateApiKeyRecord(
+  name: string,
+  ownerId?: string
+): Promise<{ apiKey: string; record: ApiKey }> {
   const rawKey = generateAPIKey();
   const keyHash = await hashAPIKey(rawKey);
   const now = new Date().toISOString();
@@ -90,6 +93,7 @@ export async function generateApiKeyRecord(name: string): Promise<{ apiKey: stri
     name,
     createdAt: now,
     revoked: false,
+    ...(ownerId ? { ownerId } : {}),
   };
 
   return {
@@ -98,8 +102,11 @@ export async function generateApiKeyRecord(name: string): Promise<{ apiKey: stri
   };
 }
 
-export async function createApiKey(name: string): Promise<{ apiKey: string; record: ApiKey }> {
-  const result = await generateApiKeyRecord(name);
+export async function createApiKey(
+  name: string,
+  ownerId?: string
+): Promise<{ apiKey: string; record: ApiKey }> {
+  const result = await generateApiKeyRecord(name, ownerId);
   await addApiKey(result.record);
   return result;
 }
@@ -147,7 +154,9 @@ export function requireApiKeyOwner(validated: ValidatedApiKey): { ownerId: strin
     );
   }
   return {
-    ownerId: 'user_' + validated.apiKeyId.slice(0, 12),
+    // 显式绑定过归属的 Key（扫码配对产生的）用它自己写的 ownerId，
+    // 旧 Key 没有该字段，仍沿用按 apiKeyId 派生的历史规则
+    ownerId: validated.apiKey.ownerId || 'user_' + validated.apiKeyId.slice(0, 12),
     apiKey: validated.apiKey,
   };
 }

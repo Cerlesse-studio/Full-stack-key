@@ -66,6 +66,16 @@
 
         <form id="setup-form" class="space-y-4">
           <div class="form-field">
+            <label for="setup-pair-code" class="field-label">扫码配对（推荐）</label>
+            <div class="pair-row">
+              <input type="text" id="setup-pair-code" class="field-input" placeholder="粘贴控制台二维码里打开的配对链接" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="btn-apply-pair">自动填入</button>
+              <button type="button" class="btn" id="btn-scan-pair" title="截取屏幕并框出二维码，不用摄像头">扫码</button>
+            </div>
+            <span class="field-hint">在电脑端「设置 → API 密钥 → 扫码连接」生成二维码；点「扫码」会截取屏幕，在截图里框住二维码即可自动填好地址与密钥。也可以把二维码里的配对链接直接粘到这里</span>
+          </div>
+
+          <div class="form-field">
             <label for="setup-api-url" class="field-label">API 服务地址</label>
             <input type="url" id="setup-api-url" class="field-input" placeholder="http://localhost:3000" required />
             <span class="field-hint">本地默认为 http://localhost:3000，或云端域名</span>
@@ -144,6 +154,10 @@
                 <input type="password" id="add-password" class="field-input field-input-sm" required />
                 <button type="button" class="btn-action-icon" id="btn-gen-for-add" title="自动生成强密码">✨</button>
               </div>
+            </div>
+            <div class="form-field">
+              <label class="field-label">标签（可选，逗号分隔）</label>
+              <input type="text" id="add-tags" class="field-input field-input-sm" placeholder="如 work, shopping" />
             </div>
             <div class="flex-row-end gap-2 pt-1">
               <button type="button" class="btn btn-ghost btn-xs" id="btn-cancel-add-card">取消</button>

@@ -2,40 +2,63 @@
  * Designed to strictly match the server-side shadcn/ui neutral design system
  */
 
-/* 1. In-input Shield Badge */
-.keyvault-input-badge {
+/* 1. 输入框内嵌图标按钮
+ *
+ * 以前是一块 22x22 的深色徽章常驻飘在输入框上：既抢眼，又会挡住用户点输入框，
+ * 页面一滚还会拖在后面。现在换成 1Password / Bitwarden 那种内嵌在输入框右缘的
+ * 低调图标按钮 —— 默认完全透明且不接收指针事件，只有输入框被悬停或聚焦时才淡入，
+ * 所以平时页面上看不见任何东西，按钮也永远不会吃掉一次正常输入。 */
+.keyvault-inline-btn {
+  /* 注入到别人的页面里，先把宿主页面的 button 样式全部抹掉再逐项声明 */
+  all: unset;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 6px;
-  background: #18181b;
-  color: #fafafa;
+  background: transparent;
+  color: #71717a;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-  transition: all 0.15s ease;
   user-select: none;
-  pointer-events: auto;
-  opacity: 0.85;
+  /* 只能过渡视觉效果。写 all 会把 JS 写入的 top/left 也动画掉，
+     滚动时按钮就会拖在输入框后面慢慢追 */
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.keyvault-input-badge:hover {
+.keyvault-inline-btn.keyvault-inline-visible {
   opacity: 1;
-  transform: scale(1.08);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+  pointer-events: auto;
 }
 
-.keyvault-input-badge svg {
-  width: 13px;
-  height: 13px;
+.keyvault-inline-btn:hover {
+  background: rgba(24, 24, 27, 0.08);
+  color: #18181b;
+}
+
+.keyvault-inline-btn:active {
+  background: rgba(24, 24, 27, 0.14);
+}
+
+.keyvault-inline-btn svg {
+  display: block;
+  width: 15px;
+  height: 15px;
 }
 
 @media (prefers-color-scheme: dark) {
-  .keyvault-input-badge {
-    background: #27272a;
+  .keyvault-inline-btn {
+    color: #a1a1aa;
+  }
+  .keyvault-inline-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
     color: #fafafa;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+  .keyvault-inline-btn:active {
+    background: rgba(255, 255, 255, 0.2);
   }
 }
 
@@ -141,7 +164,8 @@
 }
 
 .keyvault-action-remember,
-.keyvault-action-generate {
+.keyvault-action-generate,
+.keyvault-action-scan {
   flex-direction: row;
   align-items: center;
   gap: 8px;
@@ -152,19 +176,22 @@
 
 @media (prefers-color-scheme: dark) {
   .keyvault-action-remember,
-  .keyvault-action-generate {
+  .keyvault-action-generate,
+  .keyvault-action-scan {
     color: #fafafa;
   }
 }
 
 .keyvault-action-remember:hover,
-.keyvault-action-generate:hover {
+.keyvault-action-generate:hover,
+.keyvault-action-scan:hover {
   background: #f4f4f5;
 }
 
 @media (prefers-color-scheme: dark) {
   .keyvault-action-remember:hover,
-  .keyvault-action-generate:hover {
+  .keyvault-action-generate:hover,
+  .keyvault-action-scan:hover {
     background: #27272a;
   }
 }
@@ -545,4 +572,20 @@
 .keyvault-toast-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+.keyvault-toast.keyvault-toast-error {
+  background: #b91c1c;
+  color: #ffffff;
+  max-width: 340px;
+  white-space: normal;
+  border-radius: 10px;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .keyvault-toast.keyvault-toast-error {
+    background: #ef4444;
+    color: #ffffff;
+  }
 }

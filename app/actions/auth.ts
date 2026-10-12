@@ -7,8 +7,10 @@ import {
   loginWithMasterPassword,
   logoutSession as _logoutSession,
   changeMasterPassword as _changeMasterPassword,
+  factoryResetVault,
+  verifyMasterPassword,
 } from '@/lib/auth/init';
-import { isInitialized, getSession } from '@/lib/repositories/configRepository';
+import { isInitialized, getSession, getAdminUsername } from '@/lib/repositories/configRepository';
 import {
   createPasswordEntry,
   listPasswordEntries,
@@ -22,15 +24,7 @@ import {
   importPasswords,
   getAllPasswordEntries,
   emptyTrash,
-  resetVault,
 } from '@/lib/repositories/passwordRepository';
-import {
-  getAllCategories,
-  createCategory,
-  updateCategory,
-  deleteCategory,
-  getCategoryUsageCounts,
-} from '@/lib/repositories/categoryRepository';
 import {
   getAllTags,
   createTag,
@@ -100,9 +94,19 @@ export async function getInitStatus(): Promise<{ initialized: boolean }> {
   }
 }
 
+/** 读取管理员账号名称（顶栏 / 设置页展示用，需登录） */
+export async function getAdminProfileAction(): Promise<{ adminUsername: string }> {
+  await getServerContext();
+  return { adminUsername: await getAdminUsername() };
+}
+
 export async function initAppAction(formData: FormData) {
   const password = String(formData.get('masterPassword') || '');
   const confirm = String(formData.get('confirmPassword') || '');
+  const adminUsername = String(formData.get('adminUsername') || '');
+  if (!adminUsername.trim()) {
+    return { ok: false, error: '请输入管理员账号名称' };
+  }
   if (!password || password.length < 8) {
     return { ok: false, error: 'Master password must be at least 8 characters' };
   }
@@ -126,7 +130,7 @@ export async function initAppAction(formData: FormData) {
       return { ok: true, alreadyInitialized: true };
     }
 
-    const result = await initializeApp(password);
+    const result = await initializeApp(password, adminUsername);
     const login = await loginWithMasterPassword(password);
     const cookieStore = await cookies();
     const cookieName = process.env.SESSION_COOKIE_NAME || 'pm_session';
@@ -137,7 +141,7 @@ export async function initAppAction(formData: FormData) {
       path: '/',
       expires: new Date(login.expiresAt),
     });
-    return { ok: true, apiKey: result.apiKey };
+    return { ok: true, apiKey: result.apiKey, adminUsername: result.adminUsername };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Initialization failed' };
   }
@@ -178,11 +182,11 @@ export async function logoutAction() {
 
 export async function listPasswordsAction(params?: {
   search?: string;
-  categoryId?: string;
   tag?: string;
   trashed?: boolean;
   page?: number;
   perPage?: number;
+  sortBy?: 'updatedAt_desc' | 'updatedAt_asc' | 'site_asc' | 'site_desc' | 'createdAt_desc';
 }) {
   const ctx = await getServerContext();
   const result = await listPasswordEntries(ctx.ownerId, params || {});
@@ -216,7 +220,6 @@ export async function createPasswordAction(formData: FormData) {
     password: String(formData.get('password') || ''),
     notes: String(formData.get('notes') || '') || undefined,
     tags,
-    categoryId: String(formData.get('categoryId') || '') || undefined,
   };
   if (!input.site || !input.password) {
     return { ok: false, error: 'Site and password are required' };
@@ -244,9 +247,6 @@ export async function updatePasswordAction(id: string, formData: FormData) {
       password: newPassword || undefined,
       notes: formData.has('notes') ? (newNotes || undefined) : undefined,
       tags: formData.has('tags') ? tags : undefined,
-      categoryId: formData.has('categoryId')
-        ? String(formData.get('categoryId')) || undefined
-        : undefined,
       version,
     };
     const encryptFn = makeEncrypt(ctx);
@@ -284,57 +284,21 @@ export async function emptyTrashAction() {
   return { ok: true, deletedCount: res.deletedCount };
 }
 
-export async function resetVaultAction() {
-  const ctx = await getServerContext();
-  const res = await resetVault(ctx.ownerId);
-  return { ok: true, ...res };
+/**
+ * 恢复出厂设置：清空整个保险库，包括主密码、API Key 与所有会话。
+ * 执行后当前登录态失效，调用方需跳回 /login 重新初始化主密码。
+ */
+export async function factoryResetAction(masterPassword: string) {
+  await getServerContext(); // 校验登录态
+  const res = await factoryResetVault(masterPassword);
+  return { ok: true as const, ...res };
 }
 
 function actionErrorMessage(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : '';
-  if (msg.includes('已存在')) return msg;
-  if (msg.toLowerCase().includes('duplicate')) return msg;
-  return fallback;
-}
-
-export async function listCategoriesAction() {
-  const ctx = await getServerContext();
-  return getAllCategories(ctx.ownerId);
-}
-
-export async function getCategoryCountsAction() {
-  const ctx = await getServerContext();
-  return getCategoryUsageCounts(ctx.ownerId);
-}
-
-export async function createCategoryAction(formData: FormData) {
-  const ctx = await getServerContext();
-  const name = String(formData.get('name') || '').trim();
-  if (!name) return { ok: false as const, error: '请输入分类名称' };
-  try {
-    const cat = await createCategory(ctx.ownerId, name);
-    return { ok: true as const, id: cat.id };
-  } catch (err) {
-    return { ok: false as const, error: actionErrorMessage(err, '创建分类失败') };
-  }
-}
-
-export async function updateCategoryAction(id: string, formData: FormData) {
-  const ctx = await getServerContext();
-  const name = String(formData.get('name') || '').trim();
-  if (!name) return { ok: false as const, error: '请输入分类名称' };
-  try {
-    await updateCategory(ctx.ownerId, id, name);
-    return { ok: true as const };
-  } catch (err) {
-    return { ok: false as const, error: actionErrorMessage(err, '更新分类失败') };
-  }
-}
-
-export async function deleteCategoryAction(id: string) {
-  const ctx = await getServerContext();
-  await deleteCategory(ctx.ownerId, id);
-  return { ok: true };
+  if (!msg) return fallback;
+  if (msg.includes('NEXT_REDIRECT')) throw err;
+  return msg || fallback;
 }
 
 export async function listTagsAction() {
@@ -348,27 +312,29 @@ export async function getTagCountsAction() {
 }
 
 export async function createTagAction(formData: FormData) {
-  const ctx = await getServerContext();
-  const name = String(formData.get('name') || '').trim();
-  const color = String(formData.get('color') || '').trim() || undefined;
-  if (!name) return { ok: false as const, error: '请输入标签名称' };
   try {
+    const ctx = await getServerContext();
+    const name = String(formData.get('name') || '').trim();
+    const color = String(formData.get('color') || '').trim() || undefined;
+    if (!name) return { ok: false as const, error: '请输入标签名称' };
     const tag = await createTag(ctx.ownerId, name, color);
     return { ok: true as const, id: tag.id };
   } catch (err) {
+    if (err instanceof Error && err.message.includes('NEXT_REDIRECT')) throw err;
     return { ok: false as const, error: actionErrorMessage(err, '创建标签失败') };
   }
 }
 
 export async function updateTagAction(id: string, formData: FormData) {
-  const ctx = await getServerContext();
-  const name = String(formData.get('name') || '').trim();
-  const color = formData.has('color') ? (String(formData.get('color')) || undefined) : undefined;
-  if (!name) return { ok: false as const, error: '请输入标签名称' };
   try {
+    const ctx = await getServerContext();
+    const name = String(formData.get('name') || '').trim();
+    const color = formData.has('color') ? (String(formData.get('color')) || undefined) : undefined;
+    if (!name) return { ok: false as const, error: '请输入标签名称' };
     await updateTag(ctx.ownerId, id, { name, color });
     return { ok: true as const };
   } catch (err) {
+    if (err instanceof Error && err.message.includes('NEXT_REDIRECT')) throw err;
     return { ok: false as const, error: actionErrorMessage(err, '更新标签失败') };
   }
 }
@@ -416,12 +382,21 @@ export async function changeMasterPasswordAction(formData: FormData) {
   }
 }
 
+export async function verifyMasterPasswordAction(password: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await getServerContext();
+    if (!password) return { ok: false, error: '请输入主密码' };
+    const valid = await verifyMasterPassword(password);
+    if (!valid) return { ok: false, error: '主密码不正确' };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : '验证失败' };
+  }
+}
+
 export async function exportDataAction() {
   const ctx = await getServerContext();
-  const categories = await getAllCategories(ctx.ownerId);
-  const tags = await getAllTags(ctx.ownerId);
-  const pwd = await exportAllData(ctx.ownerId);
-  return { ...pwd, categories, tags };
+  return exportAllData(ctx.ownerId);
 }
 
 export async function importDataAction(data: ExportData, strategy: 'skip' | 'overwrite' | 'duplicate' = 'skip') {
@@ -469,7 +444,6 @@ export interface DataMetrics {
     totalPasswords: number;
     activePasswords: number;
     trashedPasswords: number;
-    categories: number;
     tags: number;
     apiKeys: number;
   };
@@ -479,11 +453,10 @@ export async function getDataMetricsAction(): Promise<DataMetrics> {
   const ctx = await getServerContext();
   const { getStorageInfo, getStorageStats } = await import('@/lib/storage');
 
-  const [info, stats, allPasswords, categories, tags, apiKeysList] = await Promise.all([
+  const [info, stats, allPasswords, tags, apiKeysList] = await Promise.all([
     getStorageInfo(),
     getStorageStats(),
     getAllPasswordEntries(ctx.ownerId),
-    getAllCategories(ctx.ownerId),
     getAllTags(ctx.ownerId),
     listApiKeys(),
   ]);
@@ -493,7 +466,6 @@ export async function getDataMetricsAction(): Promise<DataMetrics> {
 
   const payloadStr = JSON.stringify({
     passwords: allPasswords,
-    categories,
     tags,
   });
   const payloadBytes = Buffer.byteLength(payloadStr, 'utf8');
@@ -543,7 +515,6 @@ export async function getDataMetricsAction(): Promise<DataMetrics> {
       totalPasswords: allPasswords.length,
       activePasswords,
       trashedPasswords,
-      categories: categories.length,
       tags: tags.length,
       apiKeys: apiKeysList.length,
     },
@@ -597,11 +568,10 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
   const ctx = await getServerContext();
   const { getStorageInfo, getDetailedDatabaseStats } = await import('@/lib/storage');
 
-  const [info, detailed, allPasswords, categories, tags, apiKeysList] = await Promise.all([
+  const [info, detailed, allPasswords, tags, apiKeysList] = await Promise.all([
     getStorageInfo(),
     getDetailedDatabaseStats(),
     getAllPasswordEntries(ctx.ownerId),
-    getAllCategories(ctx.ownerId),
     getAllTags(ctx.ownerId),
     listApiKeys(),
   ]);
@@ -632,8 +602,9 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
 
   const passwordEntries = entries.filter((e) => e.key.includes(':passwords:') && !e.key.endsWith(':__index__'));
   const passwordIndexEntries = entries.filter((e) => e.key.includes(':passwords:__index__'));
-  const categoryEntries = entries.filter((e) => e.key.includes(':categories:') && !e.key.endsWith(':__index__'));
-  const categoryIndexEntries = entries.filter((e) => e.key.includes(':categories:__index__'));
+  const categoryEntries = entries.filter(
+    (e) => e.key.includes(':categories:') && !e.key.endsWith(':__index__')
+  );
   const tagEntries = entries.filter((e) => e.key.includes(':tags:') && !e.key.endsWith(':__index__'));
   const tagIndexEntries = entries.filter((e) => e.key.includes(':tags:__index__'));
   const configEntries = entries.filter((e) => e.key === 'pm:__config__');
@@ -643,7 +614,6 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
       !passwordEntries.includes(e) &&
       !passwordIndexEntries.includes(e) &&
       !categoryEntries.includes(e) &&
-      !categoryIndexEntries.includes(e) &&
       !tagEntries.includes(e) &&
       !tagIndexEntries.includes(e) &&
       !configEntries.includes(e) &&
@@ -698,19 +668,7 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
     sampleKeys: passwordIndexEntries.map((e) => e.key),
   });
 
-  // 4. Categories Partition
-  tables.push({
-    id: 'categories',
-    name: '分类数据分区 (categories)',
-    type: 'logical',
-    description: '存放所有自定义密码分类元数据及排序索引',
-    recordCount: categories.length || categoryEntries.length,
-    sizeFormatted: formatBytes(sumBytes(categoryEntries) + sumBytes(categoryIndexEntries) || categories.length * 128),
-    keyPattern: `pm:${ctx.ownerId}:categories:<id>`,
-    sampleKeys: categoryEntries.slice(0, 5).map((e) => e.key),
-  });
-
-  // 5. Tags Partition
+  // 4. Tags Partition
   tables.push({
     id: 'tags',
     name: '标签数据分区 (tags)',
@@ -722,7 +680,7 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
     sampleKeys: tagEntries.slice(0, 5).map((e) => e.key),
   });
 
-  // 6. Security Config Partition
+  // 5. Security Config Partition
   tables.push({
     id: 'config',
     name: '系统安全配置表 (config)',
@@ -734,7 +692,7 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
     sampleKeys: configEntries.map((e) => e.key),
   });
 
-  // 7. Sessions Partition
+  // 6. Sessions Partition
   if (sessionEntries.length > 0) {
     tables.push({
       id: 'sessions',
@@ -748,7 +706,7 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
     });
   }
 
-  // 8. Other Partitions
+  // 7. Other Partitions
   if (otherEntries.length > 0) {
     tables.push({
       id: 'other',
@@ -764,7 +722,6 @@ export async function getDatabaseDetailsAction(): Promise<DatabaseDetails> {
 
   const payloadStr = JSON.stringify({
     passwords: allPasswords,
-    categories,
     tags,
   });
   const payloadBytes = Buffer.byteLength(payloadStr, 'utf8');

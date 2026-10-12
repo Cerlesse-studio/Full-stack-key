@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 上游压缩产物，不是手写代码
+    "extension/vendor/**",
   ]),
   {
     plugins: {
